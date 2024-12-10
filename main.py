@@ -28,6 +28,11 @@ class AsanaClient:
         self.cached_projects = None
         self.last_Fetch_time = None
         self.cache_duration = 300  # 5 minutes
+        self.color_mapping = {
+            "purple": "light-purple",
+            "yellow": "dark-brown",
+            "orange": "dark-orange",
+        }
         self.load_config()
 
     def load_config(self) -> None:
@@ -142,10 +147,18 @@ def create_app():
     client = AsanaClient()
 
     async def refresh_projects():
-        await client.fetch_projects()
-        ui.notify("Projects refreshed", type="positive")
+        if client.is_configured:
+            print("Checking if projects need refreshing...")
+            await client.fetch_projects()
+            ui.notify("Projects refreshed", type="positive")
 
-    ui.timer(300000, refresh_projects)  # Five minutes in ms
+    def start_refresh_timer():
+        if client.is_configured:
+            print("Starting refresh timer.")
+            ui.timer(client.cache_duration, refresh_projects)
+
+    if client.is_configured:
+        start_refresh_timer()
 
     async def display_projects(
         color: str | None = None,
@@ -190,6 +203,7 @@ def create_app():
 
                 if client.is_configured:
                     ui.notify("Settings saved successfully!", type="positive")
+                    start_refresh_timer()
                     dialog.close()
                     ui.navigate.reload()
                 else:
@@ -213,31 +227,32 @@ def create_app():
     def root():
         create_header()
         ui.label("Get list of:").classes("text-lg")
-        ui.link("all", "/all")
+        ui.link("all (debug page)", "/all")
         ui.button(
-            "Purples with dates", on_click=lambda: ui.navigate.to("/purple-dates")
+            "Purples with dates",
+            on_click=lambda: ui.navigate.to("/purple?with_dates=True"),
         ).classes("!bg-[#CD95EA]")
         ui.button(
-            "Yellows with dates", on_click=lambda: ui.navigate.to("/yellow-dates")
+            "Yellows with dates",
+            on_click=lambda: ui.navigate.to("/yellow?with_dates=True"),
         ).classes("!bg-[#F8DF72]")
         ui.button(
-            "Orange with dates", on_click=lambda: ui.navigate.to("/orange-dates")
+            "Orange with dates",
+            on_click=lambda: ui.navigate.to("/orange?with_dates=True"),
         ).classes("!bg-[#EC8D71]")
 
         if not client.is_configured:
             ui.timer(0.1, lambda: show_settings(force=True), once=True)
+            return
 
     @ui.page("/all")
     async def all_projects():
         create_header()
         ui.label("All projects")
-        spinning = ui.spinner(type="dots", size="xl")
-        await ui.context.client.connected()
 
         projects = await client.fetch_projects()
 
         if projects:
-            spinning.visible = False
             colors_seen = set()
             for project in projects:
                 color = project["color"]
@@ -247,25 +262,87 @@ def create_app():
                         f"Color: {color} (Example: {project['name']} at {project['permalink_url']})"
                     )
 
-    @ui.page("/purple-dates")
-    async def purple_dates():
+    @ui.page("/{color}")
+    async def list_color(color: str, with_dates: bool = False):
         create_header()
-        ui.label("Purples with dates").classes("text-lg")
-        await display_projects(color="light-purple", with_dates=True)
-
-    @ui.page("/yellow-dates")
-    async def yellow_dates():
-        create_header()
-        ui.label("Yellows with dates (sorted by creation)").classes("text-lg")
-        await display_projects(
-            color="dark-brown", with_dates=True, sort_by_creation=True
+        ui.label(f"{color.capitalize()}s{" with dates" if with_dates else ""}").classes(
+            "text-lg"
         )
+        internal_color = client.color_mapping.get(color)
+        if not internal_color:
+            ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
+            return
+        await display_projects(color=internal_color, with_dates=with_dates)
 
-    @ui.page("/orange-dates")
-    async def orange_dates():
+    @ui.page("/review/{color}")
+    async def review_projects(color: str, with_dates: bool = False):
         create_header()
-        ui.label("Oranges with dates").classes("text-lg")
-        await display_projects(color="dark-orange", with_dates=True)
+        internal_color = client.color_mapping.get(color)
+        if not internal_color:
+            ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
+            return
+        ui.label(f"Review {color} projects").classes("text-lg")
+
+        filtered_projects = client.filter_projects(internal_color, with_dates)
+
+        if not filtered_projects:
+            ui.label(f"No {color} projects found")
+            return
+
+        current_index = 0
+
+        @ui.refreshable
+        def show_current_project():
+            nonlocal current_index
+            with ui.card().classes("w-full max-w-2xl mx-auto p-4"):
+                if current_index >= len(filtered_projects):
+                    ui.label("No more projects to review!").classes("text-xl")
+                    return
+
+                project = filtered_projects[current_index]
+
+                ui.label(
+                    f"Project {current_index + 1} of {len(filtered_projects)}"
+                ).classes("text-sm text-gray-500")
+                ui.label(project["name"]).classes("text-xl font-bold")
+
+                if project.get("notes"):
+                    ui.label("Notes:").classes("font-bold mt-2")
+                    ui.label(project["notes"]).classes("whitespace-pre-wrap")
+
+                ui.link(
+                    "Open in Asana", project["permalink_url"], new_tab=True
+                ).classes("mt-2")
+
+                with ui.row().classes("w-full justify-between mt-4"):
+
+                    def go_previous():
+                        nonlocal current_index
+                        current_index = max(0, current_index - 1)
+                        show_current_project.refresh()
+
+                    def go_next():
+                        nonlocal current_index
+                        current_index = min(
+                            len(filtered_projects) - 1, current_index + 1
+                        )
+                        show_current_project.refresh()
+
+                    prev_button = ui.button("Previous", on_click=go_previous).props(
+                        "icon=arrow_back"
+                    )
+
+                    next_button = ui.button(
+                        "Skip/Next",
+                        on_click=go_next,
+                    ).props("icon=arrow_forward")
+
+                    if current_index <= 0:
+                        prev_button.disable()
+                    if current_index >= len(filtered_projects) - 1:
+                        next_button.disable()
+
+        show_current_project()
 
     ui.run(native=True, title="Asana Tool")
 
