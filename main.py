@@ -3,6 +3,7 @@ import multiprocessing
 # Bizarrely, this needs to be up here for native mode, don't move it
 multiprocessing.set_start_method("spawn", force=True)
 import re
+import time
 from os import getenv
 from typing import Any, Dict, Optional
 
@@ -24,6 +25,9 @@ class AsanaClient:
         }
         self.allowed_domains = ["mhs.com", "pearsonassessments.com"]
         self.projects_api = None
+        self.cached_projects = None
+        self.last_Fetch_time = None
+        self.cache_duration = 300  # 5 minutes
         self.load_config()
 
     def load_config(self) -> None:
@@ -54,51 +58,117 @@ class AsanaClient:
         """Check if all required configuration is present"""
         return all(self.config.values())
 
+    async def fetch_projects(
+        self, opt_fields="name,color,permalink_url,notes,created_at"
+    ) -> list[dict] | None:
+        current_time = time.time()
 
-def get_asana_projects(
-    projects_api, workspace_gid, opt_fields="name,color,permalink_url,notes"
-):
-    opts: dict[str, Any] = {"limit": 100, "archived": False, "opt_fields": opt_fields}
-    try:
-        print("Fetching projects...")
+        # If we have cached data that's still fresh, return it
+        if (
+            self.cached_projects is not None
+            and self.last_fetch_time is not None
+            and current_time - self.last_fetch_time < self.cache_duration
+        ):
+            return self.cached_projects
 
-        api_response: list[dict] = list(
-            projects_api.get_projects_for_workspace(
-                workspace_gid,
-                opts,  # pyright: ignore (asana api is strange)
+        # Otherwise fetch new data
+        if not self.is_configured or not self.projects_api:
+            return None
+
+        opts: dict[str, Any] = {
+            "limit": 100,
+            "archived": False,
+            "opt_fields": opt_fields,
+        }
+        try:
+            print("Fetching fresh projects data...")
+            api_response: list[dict] = list(
+                self.projects_api.get_projects_for_workspace(
+                    self.config["workspace"],
+                    opts,  # type: ignore
+                )
             )
-        )
+            self.cached_projects = api_response
+            self.last_fetch_time = current_time
+            print(f"{len(api_response)} projects found.")
+            return api_response
 
-    except ApiException as e:
-        print(
-            "Exception when calling ProjectsApi->get_projects_for_workspace: %s\n" % e
-        )
-        return
+        except ApiException as e:
+            print(
+                f"Exception when calling ProjectsApi->get_projects_for_workspace: {e}"
+            )
+            return None
 
-    if api_response:
-        print(f"Found {len(api_response)} projects")
-        return api_response
+    def filter_projects(
+        self, color: str | None = None, with_dates: bool = False
+    ) -> list[dict]:
+        if not self.cached_projects:
+            return []
 
+        filtered = self.cached_projects
 
-def filter_projects_by_color(projects: list[dict], color: str) -> list[dict]:
-    filtered_projects: list[dict] = []
-    for project in projects:
-        if project["color"] != color:
-            continue
-        filtered_projects.append(project)
-    return filtered_projects
+        if color:
+            filtered = [p for p in filtered if p["color"] == color]
 
+        if with_dates:
+            filtered = [
+                p
+                for p in filtered
+                if re.search(r"\d{1,2}.\d{1,2}(.\d{1,4})?", p["name"])
+            ]
 
-def get_projects_with_dates(projects: list[dict]) -> list[dict]:
-    filtered_projects: list[dict] = []
-    for project in projects:
-        if re.search(r"\d{1,2}.\d{1,2}(.\d{1,4})?", project["name"]):
-            filtered_projects.append(project)
-    return filtered_projects
+        return filtered
+
+    def fetch_project(
+        self,
+        project_gid: str,
+        opt_fields: str = "name,color,permalink_url,notes,created_at",
+    ) -> dict | None:
+        """Fetch the latest version of a single project by its GID"""
+        if not self.is_configured or not self.projects_api:
+            return None
+
+        try:
+            return self.projects_api.get_project(
+                project_gid,
+                opt_fields=opt_fields,  # type: ignore
+            )
+        except ApiException as e:
+            print(f"Exception when calling ProjectsApi->get_project: {e}")
+            return None
 
 
 def create_app():
     client = AsanaClient()
+
+    async def refresh_projects():
+        await client.fetch_projects()
+        ui.notify("Projects refreshed", type="positive")
+
+    ui.timer(300000, refresh_projects)  # Five minutes in ms
+
+    async def display_projects(
+        color: str | None = None,
+        with_dates: bool = False,
+        sort_by_creation: bool = False,
+    ):
+        """Reusable function to display filtered projects as a list"""
+        spinning = ui.spinner(type="dots", size="xl")
+
+        projects = await client.fetch_projects()
+        if not projects:
+            spinning.visible = False
+            ui.label("No projects found")
+            return
+
+        filtered_projects = client.filter_projects(color, with_dates)
+
+        if sort_by_creation:
+            filtered_projects.sort(key=lambda p: p["created_at"])
+
+        spinning.visible = False
+        for project in filtered_projects:
+            ui.link(project["name"], project["permalink_url"], new_tab=True)
 
     def show_settings(force: bool = False):
         with ui.dialog() as dialog, ui.card().classes("w-96"):
@@ -164,7 +234,7 @@ def create_app():
         spinning = ui.spinner(type="dots", size="xl")
         await ui.context.client.connected()
 
-        projects = get_asana_projects(client.projects_api, client.config["workspace"])
+        projects = await client.fetch_projects()
 
         if projects:
             spinning.visible = False
@@ -181,55 +251,21 @@ def create_app():
     async def purple_dates():
         create_header()
         ui.label("Purples with dates").classes("text-lg")
-        spinning = ui.spinner(type="dots", size="xl")
-        await ui.context.client.connected()
-
-        projects = get_asana_projects(client.projects_api, client.config["workspace"])
-        if projects:
-            spinning.visible = False
-            filtered_projects = filter_projects_by_color(projects, "light-purple")
-            filtered_projects = get_projects_with_dates(filtered_projects)
-            for project in filtered_projects:
-                ui.link(project["name"], project["permalink_url"], True)
+        await display_projects(color="light-purple", with_dates=True)
 
     @ui.page("/yellow-dates")
     async def yellow_dates():
         create_header()
         ui.label("Yellows with dates (sorted by creation)").classes("text-lg")
-        spinning = ui.spinner(type="dots", size="xl")
-        await ui.context.client.connected()
-
-        projects = get_asana_projects(
-            client.projects_api,
-            client.config["workspace"],
-            "name,color,permalink_url,notes,created_at",
+        await display_projects(
+            color="dark-brown", with_dates=True, sort_by_creation=True
         )
-        if projects:
-            spinning.visible = False
-            filtered_projects = filter_projects_by_color(projects, "dark-brown")
-            filtered_projects = get_projects_with_dates(filtered_projects)
-            filtered_projects = sorted(filtered_projects, key=lambda p: p["created_at"])
-            for project in filtered_projects:
-                ui.link(project["name"], project["permalink_url"], True)
 
     @ui.page("/orange-dates")
     async def orange_dates():
         create_header()
         ui.label("Oranges with dates").classes("text-lg")
-        spinning = ui.spinner(type="dots", size="xl")
-        await ui.context.client.connected()
-
-        projects = get_asana_projects(
-            client.projects_api,
-            client.config["workspace"],
-            "name,color,permalink_url,notes,created_at",
-        )
-        if projects:
-            spinning.visible = False
-            filtered_projects = filter_projects_by_color(projects, "dark-orange")
-            filtered_projects = get_projects_with_dates(filtered_projects)
-            for project in filtered_projects:
-                ui.link(project["name"], project["permalink_url"], True)
+        await display_projects(color="dark-orange", with_dates=True)
 
     ui.run(native=True, title="Asana Tool")
 
