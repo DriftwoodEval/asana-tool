@@ -27,7 +27,7 @@ class AsanaClient:
         self.allowed_domains = ["mhs.com", "pearsonassessments.com"]
         self.projects_api = None
         self.cached_projects = None
-        self.last_Fetch_time = None
+        self.last_fetch_time = None
         self.cache_duration = 300  # 5 minutes
         self.colors = {
             "purple": {
@@ -79,19 +79,18 @@ class AsanaClient:
         return all(self.config.values())
 
     async def fetch_projects(
-        self, opt_fields="name,color,permalink_url,notes,created_at"
+        self, opt_fields="name,color,permalink_url,notes,created_at", force=False
     ) -> list[dict] | None:
         current_time = time.time()
 
-        # If we have cached data that's still fresh, return it
         if (
-            self.cached_projects is not None
+            not force
+            and self.cached_projects is not None
             and self.last_fetch_time is not None
             and current_time - self.last_fetch_time < self.cache_duration
         ):
             return self.cached_projects
 
-        # Otherwise fetch new data
         if not self.is_configured or not self.projects_api:
             return None
 
@@ -209,20 +208,10 @@ def create_app():
     client = AsanaClient()
     is_initialized = False
 
-    async def refresh_projects():
-        if client.is_configured:
-            print("Checking if projects need refreshing...")
-            await client.fetch_projects()
-
-    def start_refresh_timer():
-        if client.is_configured:
-            print("Starting refresh timer.")
-            ui.timer(client.cache_duration, refresh_projects)
-
     async def initialize_app():
         nonlocal is_initialized
         if client.is_configured and not is_initialized:
-            start_refresh_timer()
+            await client.fetch_projects()
             is_initialized = True
 
     async def display_projects(
@@ -275,7 +264,7 @@ def create_app():
 
                 if client.is_configured:
                     ui.notify("Settings saved successfully!", type="positive")
-                    start_refresh_timer()
+                    await client.fetch_projects()
                     dialog.close()
                     ui.navigate.reload()
                 else:
@@ -288,16 +277,47 @@ def create_app():
 
         dialog.open()
 
-    def create_header():
+    @ui.refreshable
+    def display_staleness():
+        if client.last_fetch_time is None:
+            return ui.label("No data loaded").classes("text-white")
+
+        elapsed_seconds = int(time.time() - client.last_fetch_time)
+
+        if elapsed_seconds < 60:
+            time_text = f"{elapsed_seconds}s"
+        elif elapsed_seconds < 3600:
+            minutes = elapsed_seconds // 60
+            time_text = f"{minutes}m"
+        else:
+            hours = elapsed_seconds // 3600
+            time_text = f"{hours}h"
+
+        return ui.label(f"Data age: {time_text}").classes("text-white")
+
+    def create_header(refresh=True, root_page=False):
         with ui.header().classes("items-center justify-between"):
             ui.link("Asana Tool", "/").classes(
                 "text-xl font-bold text-white no-underline"
             )
-            ui.button(on_click=show_settings, icon="settings").props("flat color=white")
+            with ui.row().classes("items-center"):
+                if refresh:
+                    display_staleness()
+                    ui.button(
+                        on_click=lambda: client.fetch_projects(force=True),
+                        icon="refresh",
+                    ).props("flat color=white")
+                if root_page:
+                    ui.button(on_click=show_settings, icon="settings").props(
+                        "flat color=white"
+                    )
+
+        # Update the staleness display every second
+        ui.timer(1.0, display_staleness.refresh)
 
     @ui.page("/")
     def root():
-        create_header()
+        create_header(root_page=True)
 
         with ui.row():
             with ui.column():
@@ -315,7 +335,7 @@ def create_app():
                         d=config["include_dates"]: ui.navigate.to(
                             f"/{c}?with_dates={d}"
                         ),
-                    ).classes(f"!bg-[{config['color']}]")
+                    ).classes(f"!bg-[{config['color']}] !text-black")
 
             with ui.column():
                 ui.label("Review:").classes("text-lg")
@@ -329,7 +349,7 @@ def create_app():
                         on_click=lambda c=color: ui.navigate.to(
                             f"/review/{c}?with_dates={config['include_dates']}"
                         ),
-                    ).classes(f"!bg-[{config['color']}]")
+                    ).classes(f"!bg-[{config['color']}] !text-black")
 
         async def init():
             if not client.is_configured:
@@ -372,7 +392,7 @@ def create_app():
 
     @ui.page("/review/{color}")
     async def review_projects(color: str, with_dates: bool = False):
-        create_header()
+        create_header(refresh=False)
         internal_color = client.colors.get(color)
         if not internal_color:
             ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
