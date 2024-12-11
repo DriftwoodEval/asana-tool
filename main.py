@@ -145,20 +145,24 @@ class AsanaClient:
 
 def create_app():
     client = AsanaClient()
+    is_initialized = False
 
     async def refresh_projects():
         if client.is_configured:
             print("Checking if projects need refreshing...")
             await client.fetch_projects()
-            ui.notify("Projects refreshed", type="positive")
 
     def start_refresh_timer():
         if client.is_configured:
             print("Starting refresh timer.")
             ui.timer(client.cache_duration, refresh_projects)
 
-    if client.is_configured:
-        start_refresh_timer()
+    async def initialize_app():
+        nonlocal is_initialized
+        if client.is_configured and not is_initialized:
+            await refresh_projects()
+            start_refresh_timer()
+            is_initialized = True
 
     async def display_projects(
         color: str | None = None,
@@ -226,24 +230,56 @@ def create_app():
     @ui.page("/")
     def root():
         create_header()
-        ui.label("Get list of:").classes("text-lg")
-        ui.link("all (debug page)", "/all")
-        ui.button(
-            "Purples with dates",
-            on_click=lambda: ui.navigate.to("/purple?with_dates=True"),
-        ).classes("!bg-[#CD95EA]")
-        ui.button(
-            "Yellows with dates",
-            on_click=lambda: ui.navigate.to("/yellow?with_dates=True"),
-        ).classes("!bg-[#F8DF72]")
-        ui.button(
-            "Orange with dates",
-            on_click=lambda: ui.navigate.to("/orange?with_dates=True"),
-        ).classes("!bg-[#EC8D71]")
 
-        if not client.is_configured:
-            ui.timer(0.1, lambda: show_settings(force=True), once=True)
-            return
+        with ui.element("div").classes(
+            "w-full flex flex-col items-center justify-center"
+        ) as loading_container:
+            ui.spinner(size="lg")
+            ui.label("Fetching from Asana...").classes("mt-2")
+
+        with ui.element("div").classes("hidden") as content_container:
+            with ui.row():
+                with ui.column():
+                    ui.label("Get list of:").classes("text-lg")
+                    ui.link("all (debug page)", "/all")
+                    colors = {
+                        "purple": "#CD95EA",
+                        "yellow": "#F8DF72",
+                        "orange": "#EC8D71",
+                    }
+                    for color, bg in colors.items():
+                        ui.button(
+                            f"{color.capitalize()}s with dates",
+                            on_click=lambda c=color: ui.navigate.to(
+                                f"/{c}?with_dates=True"
+                            ),
+                        ).classes(f"!bg-[{bg}]")
+
+                with ui.column():
+                    ui.label("Review:").classes("text-lg")
+                    colors = {
+                        "purple": "#CD95EA",
+                        "yellow": "#F8DF72",
+                        "orange": "#EC8D71",
+                    }
+                    for color, bg in colors.items():
+                        ui.button(
+                            f"{color.capitalize()}s with dates",
+                            on_click=lambda c=color: ui.navigate.to(
+                                f"/review/{c}?with_dates=True"
+                            ),
+                        ).classes(f"!bg-[{bg}]")
+
+        async def init():
+            if not client.is_configured:
+                ui.timer(0.1, lambda: show_settings(force=True), once=True)
+                return
+
+            await initialize_app()
+            loading_container.classes(remove="block", add="hidden")
+            content_container.classes(remove="hidden", add="block")
+
+        ui.timer(0.1, init)
 
     @ui.page("/all")
     async def all_projects():
@@ -265,9 +301,9 @@ def create_app():
     @ui.page("/{color}")
     async def list_color(color: str, with_dates: bool = False):
         create_header()
-        ui.label(f"{color.capitalize()}s{" with dates" if with_dates else ""}").classes(
-            "text-lg"
-        )
+        ui.label(
+            f"{color.capitalize()}s{" with dates" if with_dates else ""} (click to open in Asana)"
+        ).classes("text-lg")
         internal_color = client.color_mapping.get(color)
         if not internal_color:
             ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
