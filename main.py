@@ -1,4 +1,5 @@
 import multiprocessing
+from datetime import datetime
 
 # Bizarrely, this needs to be up here for native mode, don't move it
 multiprocessing.set_start_method("spawn", force=True)
@@ -28,10 +29,24 @@ class AsanaClient:
         self.cached_projects = None
         self.last_Fetch_time = None
         self.cache_duration = 300  # 5 minutes
-        self.color_mapping = {
-            "purple": "light-purple",
-            "yellow": "dark-brown",
-            "orange": "dark-orange",
+        self.colors = {
+            "purple": {
+                "name": "light-purple",
+                "color": "#CD95EA",
+                "include_dates": True,
+            },
+            "yellow": {"name": "dark-brown", "color": "#F8DF72", "include_dates": True},
+            "orange": {
+                "name": "dark-orange",
+                "color": "#EC8D71",
+                "include_dates": True,
+            },
+            "blue": {"name": "light-blue", "color": "#4573D2", "include_dates": False},
+            "light-blue": {
+                "name": "dark-teal",
+                "color": "#9EE7E3",
+                "include_dates": False,
+            },
         }
         self.load_config()
 
@@ -136,11 +151,58 @@ class AsanaClient:
         try:
             return self.projects_api.get_project(
                 project_gid,
-                opt_fields=opt_fields,  # type: ignore
+                opts={"opt_fields": opt_fields},  # type: ignore
             )
         except ApiException as e:
             print(f"Exception when calling ProjectsApi->get_project: {e}")
             return None
+
+    def replace_notes(self, new_note: str, project_gid: str):
+        if not self.is_configured or not self.projects_api:
+            return None
+
+        body = {"data": {"notes": new_note}}
+        try:
+            self.projects_api.update_project(
+                body, project_gid, opts={"opt_fields": "name, notes"}
+            )
+            return "Note added."
+        except ApiException as e:
+            return f"Exception when calling ProjectsApi->update_project: {e}"
+
+    def change_color(self, new_color: str, project_gid: str):
+        if not self.is_configured or not self.projects_api:
+            return None
+
+        internal_color = self.colors.get(new_color)
+        if not internal_color:
+            return f"Invalid color: {new_color}"
+        internal_color = internal_color["name"]
+
+        body = {"data": {"color": internal_color}}
+        try:
+            self.projects_api.update_project(
+                body, project_gid, opts={"opt_fields": "name, color"}
+            )
+            return f"Color changed to {new_color}."
+        except ApiException as e:
+            return f"Exception when calling ProjectsApi->update_project: {e}"
+
+    def add_note(self, new_note: str, project_gid: str):
+        if not self.is_configured or not self.projects_api:
+            return None
+
+        today_str = datetime.now().strftime("%m/%d")
+        new_note = today_str + " " + new_note
+        initials = self.config.get("initials")
+        if initials:
+            new_note += " " + initials
+
+        current_project: dict[str, str] | None = self.fetch_project(project_gid)
+        if current_project:
+            current_notes = current_project.get("notes", "")
+            new_notes: str = new_note + "\n" + current_notes
+            self.replace_notes(new_notes, project_gid)
 
 
 def create_app():
@@ -237,44 +299,37 @@ def create_app():
     def root():
         create_header()
 
-        with ui.element("div").classes(
-            "w-full flex flex-col items-center justify-center"
-        ) as loading_container:
-            ui.spinner(size="lg")
-            ui.label("Fetching from Asana...").classes("mt-2")
+        with ui.row():
+            with ui.column():
+                ui.label("Get list of:").classes("text-lg")
+                ui.link("all (debug page)", "/all")
 
-        with ui.element("div").classes("hidden") as content_container:
-            with ui.row():
-                with ui.column():
-                    ui.label("Get list of:").classes("text-lg")
-                    ui.link("all (debug page)", "/all")
-                    colors = {
-                        "purple": "#CD95EA",
-                        "yellow": "#F8DF72",
-                        "orange": "#EC8D71",
-                    }
-                    for color, bg in colors.items():
-                        ui.button(
-                            f"{color.capitalize()}s with dates",
-                            on_click=lambda c=color: ui.navigate.to(
-                                f"/{c}?with_dates=True"
-                            ),
-                        ).classes(f"!bg-[{bg}]")
+                for color, config in client.colors.items():
+                    text = f"{color.capitalize()}s"
+                    if config["include_dates"]:
+                        text += " with dates"
 
-                with ui.column():
-                    ui.label("Review:").classes("text-lg")
-                    colors = {
-                        "purple": "#CD95EA",
-                        "yellow": "#F8DF72",
-                        "orange": "#EC8D71",
-                    }
-                    for color, bg in colors.items():
-                        ui.button(
-                            f"{color.capitalize()}s with dates",
-                            on_click=lambda c=color: ui.navigate.to(
-                                f"/review/{c}?with_dates=True"
-                            ),
-                        ).classes(f"!bg-[{bg}]")
+                    ui.button(
+                        text,
+                        on_click=lambda c=color,
+                        d=config["include_dates"]: ui.navigate.to(
+                            f"/{c}?with_dates={d}"
+                        ),
+                    ).classes(f"!bg-[{config['color']}]")
+
+            with ui.column():
+                ui.label("Review:").classes("text-lg")
+                for color, config in client.colors.items():
+                    text = f"{color.capitalize()}s"
+                    if config["include_dates"]:
+                        text += " with dates"
+
+                    ui.button(
+                        text,
+                        on_click=lambda c=color: ui.navigate.to(
+                            f"/review/{c}?with_dates={config['include_dates']}"
+                        ),
+                    ).classes(f"!bg-[{config['color']}]")
 
         async def init():
             if not client.is_configured:
@@ -282,8 +337,6 @@ def create_app():
                 return
 
             await initialize_app()
-            loading_container.classes(remove="block", add="hidden")
-            content_container.classes(remove="hidden", add="block")
 
         ui.timer(0.1, init)
 
@@ -310,20 +363,22 @@ def create_app():
         ui.label(
             f"{color.capitalize()}s{" with dates" if with_dates else ""} (click to open in Asana)"
         ).classes("text-lg")
-        internal_color = client.color_mapping.get(color)
+        internal_color = client.colors.get(color)
         if not internal_color:
             ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
             return
+        internal_color = internal_color["name"]
         await display_projects(color=internal_color, with_dates=with_dates)
 
     @ui.page("/review/{color}")
     async def review_projects(color: str, with_dates: bool = False):
         create_header()
-        internal_color = client.color_mapping.get(color)
+        internal_color = client.colors.get(color)
         if not internal_color:
             ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
             return
-        ui.label(f"Review {color} projects").classes("text-lg")
+        internal_color = internal_color["name"]
+        ui.label(f"Reviewing {color} projects").classes("text-lg")
 
         filtered_projects = client.filter_projects(internal_color, with_dates)
 
@@ -349,12 +404,35 @@ def create_app():
                 ui.label(project["name"]).classes("text-xl font-bold")
 
                 if project.get("notes"):
-                    ui.label("Notes:").classes("font-bold mt-2")
+                    ui.label("Notes:").classes("font-bold")
                     ui.label(project["notes"]).classes("whitespace-pre-wrap")
 
-                ui.link(
-                    "Open in Asana", project["permalink_url"], new_tab=True
-                ).classes("mt-2")
+                def add_note():
+                    with ui.dialog() as dialog, ui.card().classes("w-96"):
+                        note_input = ui.input("Enter note").classes("w-full")
+
+                        def submit():
+                            if note_input.value:
+                                client.add_note(note_input.value, project["gid"])
+                                dialog.close()
+
+                        with ui.row():
+                            ui.button("Submit", on_click=submit)
+                            ui.button("Cancel", on_click=dialog.close)
+                    dialog.open()
+
+                with ui.row():
+                    ui.button(
+                        "Open in Asana",
+                        on_click=lambda c=color: ui.navigate.to(
+                            project["permalink_url"], new_tab=True
+                        ),
+                    )
+
+                    ui.button(
+                        "Add note",
+                        on_click=add_note,
+                    )
 
                 with ui.row().classes("w-full justify-between mt-4"):
 
