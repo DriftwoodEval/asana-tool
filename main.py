@@ -160,7 +160,6 @@ def create_app():
     async def initialize_app():
         nonlocal is_initialized
         if client.is_configured and not is_initialized:
-            await refresh_projects()
             start_refresh_timer()
             is_initialized = True
 
@@ -184,6 +183,13 @@ def create_app():
             filtered_projects.sort(key=lambda p: p["created_at"])
 
         spinning.visible = False
+
+        def open_all_links():
+            for project in filtered_projects:
+                ui.navigate.to(project["permalink_url"], new_tab=True)
+
+        ui.button("Open All Links in Asana", on_click=open_all_links).classes("mb-4")
+
         for project in filtered_projects:
             ui.link(project["name"], project["permalink_url"], new_tab=True)
 
