@@ -246,8 +246,21 @@ def create_app():
 
     def show_settings(force: bool = False):
         with ui.dialog() as dialog, ui.card().classes("w-96"):
-            ui.label("Asana Settings").classes("text-xl font-bold")
+            ui.label("Tool Settings").classes("text-xl font-bold")
             dialog.props("persistent")
+
+            ui.link(
+                "Get an Asana API token for your account",
+                "https://app.asana.com/0/my-apps",
+                True,
+            ).classes("text-sm")
+
+            ui.link(
+                "Get your workspace GID",
+                "https://app.asana.com/api/1.0/workspaces?opt_pretty",
+                True,
+            ).classes("text-sm")
+
             inputs = {
                 key: ui.input(key.title(), value=client.config[key] or "").classes(
                     "w-full"
