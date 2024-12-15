@@ -1,3 +1,4 @@
+import asyncio
 import multiprocessing
 from datetime import datetime
 
@@ -35,6 +36,11 @@ class AsanaClient:
                 "color": "#CD95EA",
                 "include_dates": True,
             },
+            "dark-purple": {
+                "name": "dark-purple",
+                "color": "#9E97E7",
+                "include_dates": False,
+            },
             "yellow": {
                 "name": "dark-brown",
                 "color": "#F8DF72",
@@ -51,7 +57,22 @@ class AsanaClient:
                 "color": "#9EE7E3",
                 "include_dates": False,
             },
+            "light-teal": {
+                "name": "light-teal",
+                "color": "#4ECBC4",
+                "include_dates": False,
+            },
             "coral": {"name": "light-red", "color": "#FC979A", "include_dates": False},
+            "hot-pink": {
+                "name": "dark-pink",
+                "color": "#F26FB2",
+                "include_dates": False,
+            },
+            "light-pink": {
+                "name": "light-pink",
+                "color": "#4ECBC4",
+                "include_dates": False,
+            },
         }
         self.load_config()
 
@@ -104,24 +125,34 @@ class AsanaClient:
             "archived": False,
             "opt_fields": opt_fields,
         }
-        try:
-            print("Fetching fresh projects data...")
-            api_response: list[dict] = list(
-                self.projects_api.get_projects_for_workspace(
-                    self.config["workspace"],
-                    opts,  # type: ignore
-                )
-            )
-            self.cached_projects = api_response
-            self.last_fetch_time = current_time
-            print(f"{len(api_response)} projects found.")
-            return api_response
 
-        except ApiException as e:
-            print(
-                f"Exception when calling ProjectsApi->get_projects_for_workspace: {e}"
-            )
-            return None
+        max_retries = 3
+        retry_delay = 1
+
+        for attempt in range(max_retries):
+            try:
+                print("Fetching fresh projects data...")
+                api_response: list[dict] = list(
+                    self.projects_api.get_projects_for_workspace(
+                        self.config["workspace"],
+                        opts,  # type: ignore
+                    )
+                )
+                self.cached_projects = api_response
+                self.last_fetch_time = current_time
+                print(f"{len(api_response)} projects found.")
+                return api_response
+
+            except ApiException as e:
+                if e.status == 503 and attempt < max_retries - 1:
+                    print(f"Got 503 error, retrying in {retry_delay} seconds...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                print(
+                    f"Exception when calling ProjectsApi->get_projects_for_workspace: {e}"
+                )
+                return None
 
     def filter_projects(
         self, colors: list[str] | str | None = None, with_dates: bool = False
@@ -214,6 +245,16 @@ class AsanaClient:
 def create_app():
     client = AsanaClient()
     is_initialized = False
+
+    def create_loading_overlay():
+        overlay = ui.element("div").classes(
+            "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+        )
+        with overlay:
+            with ui.column().classes("flex items-center justify-center"):
+                ui.spinner(size="xl", color="white")
+                ui.label("Fetching projects...").classes("text-white")
+        return overlay
 
     async def initialize_app():
         nonlocal is_initialized
@@ -342,52 +383,72 @@ def create_app():
     def root():
         create_header(root_page=True)
 
-        with ui.row():
-            with ui.column():
-                ui.label("Get list of:").classes("text-lg")
-                ui.link("all (debug page)", "/all")
-                ui.button(
-                    "Questionnaires",
-                    on_click=lambda: ui.navigate.to("/list/light-blue,coral"),
-                ).classes(
-                    f"!bg-gradient-to-r from-[{client.colors['light-blue']['color']}] to-[{client.colors['coral']['color']}] !text-black"
-                )
+        loading = create_loading_overlay()
 
-                for color, config in client.colors.items():
-                    text = f"{color.capitalize()}s"
-                    if config["include_dates"]:
-                        text += " with dates"
+        content_container = ui.element("div")
+        content_container.set_visibility(False)
+        with content_container:
+            with ui.row():
+                with ui.column():
+                    ui.label("Get list of:").classes("text-lg")
+                    ui.link("all (debug page)", "/all")
 
                     ui.button(
-                        text,
-                        on_click=lambda c=color,
-                        d=config["include_dates"]: ui.navigate.to(
-                            f"/list/{c}?with_dates={d}"
-                        ),
-                    ).classes(f"!bg-[{config['color']}] !text-black")
-
-            with ui.column():
-                ui.label("Review:").classes("text-lg")
-                for color, config in client.colors.items():
-                    text = f"{color.capitalize()}s"
-                    if config["include_dates"]:
-                        text += " with dates"
+                        "Questionnaires",
+                        on_click=lambda: ui.navigate.to("/list/light-blue,coral"),
+                    ).classes(
+                        f"!bg-gradient-to-r from-[{client.colors['light-blue']['color']}] to-[{client.colors['coral']['color']}] !text-black"
+                    )
 
                     ui.button(
-                        text,
-                        on_click=lambda c=color: ui.navigate.to(
-                            f"/review/{c}?with_dates={config['include_dates']}"
-                        ),
-                    ).classes(f"!bg-[{config['color']}] !text-black")
+                        "Blue (Andrew)", on_click=lambda: ui.navigate.to("/list/blue")
+                    ).classes(f"!bg-[{client.colors['blue']['color']}] !text-black")
+
+                    ui.button(
+                        "Pink (Insurance)",
+                        on_click=lambda: ui.navigate.to("/list/hot-pink,light-pink"),
+                    )
+
+                    for color, config in client.colors.items():
+                        text = f"{color.capitalize()}s"
+                        if config["include_dates"]:
+                            text += " with dates"
+
+                        ui.button(
+                            text,
+                            on_click=lambda c=color,
+                            d=config["include_dates"]: ui.navigate.to(
+                                f"/list/{c}?with_dates={d}"
+                            ),
+                        ).classes(f"!bg-[{config['color']}] !text-black")
+
+                with ui.column():
+                    ui.label("Review:").classes("text-lg")
+                    for color, config in client.colors.items():
+                        text = f"{color.capitalize()}s"
+                        if config["include_dates"]:
+                            text += " with dates"
+
+                        ui.button(
+                            text,
+                            on_click=lambda c=color: ui.navigate.to(
+                                f"/review/{c}?with_dates={config['include_dates']}"
+                            ),
+                        ).classes(f"!bg-[{config['color']}] !text-black")
 
         async def init():
+            nonlocal loading
             if not client.is_configured:
                 ui.timer(0.1, lambda: show_settings(force=True), once=True)
                 return
 
-            await initialize_app()
+            try:
+                await initialize_app()
+            finally:
+                loading.set_visibility(False)
+                content_container.set_visibility(True)
 
-        ui.timer(0.1, init)
+        ui.timer(0.2, init)
 
     @ui.page("/all")
     async def all_projects():
