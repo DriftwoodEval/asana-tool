@@ -489,7 +489,7 @@ def create_app():
                 with ui.row():
                     ui.button(
                         "Open in Asana",
-                        on_click=lambda c=color: ui.navigate.to(
+                        on_click=lambda: ui.navigate.to(
                             project["permalink_url"], new_tab=True
                         ),
                     )
