@@ -35,7 +35,11 @@ class AsanaClient:
                 "color": "#CD95EA",
                 "include_dates": True,
             },
-            "yellow": {"name": "dark-brown", "color": "#F8DF72", "include_dates": True},
+            "yellow": {
+                "name": "dark-brown",
+                "color": "#F8DF72",
+                "include_dates": False,
+            },
             "orange": {
                 "name": "dark-orange",
                 "color": "#EC8D71",
@@ -47,6 +51,7 @@ class AsanaClient:
                 "color": "#9EE7E3",
                 "include_dates": False,
             },
+            "coral": {"name": "light-red", "color": "#FC979A", "include_dates": False},
         }
         self.load_config()
 
@@ -119,15 +124,17 @@ class AsanaClient:
             return None
 
     def filter_projects(
-        self, color: str | None = None, with_dates: bool = False
+        self, colors: list[str] | str | None = None, with_dates: bool = False
     ) -> list[dict]:
         if not self.cached_projects:
             return []
 
         filtered = self.cached_projects
 
-        if color:
-            filtered = [p for p in filtered if p["color"] == color]
+        if colors:
+            if isinstance(colors, str):
+                colors = [colors]
+            filtered = [p for p in filtered if p["color"] in colors]
 
         if with_dates:
             filtered = [
@@ -386,8 +393,10 @@ def create_app():
                 color = project["color"]
                 if color not in colors_seen:
                     colors_seen.add(color)
-                    ui.label(
-                        f"Color: {color} (Example: {project['name']} at {project['permalink_url']})"
+                    ui.link(
+                        f"Color: {color} (Example: {project['name']}",
+                        project["permalink_url"],
+                        True,
                     )
 
     @ui.page("/{color}")
