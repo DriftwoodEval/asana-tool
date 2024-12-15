@@ -70,8 +70,29 @@ class AsanaClient:
             },
             "light-pink": {
                 "name": "light-pink",
-                "color": "#4ECBC4",
+                "color": "#F9AAEF",
                 "include_dates": False,
+            },
+        }
+        self.page_configs = {
+            "questionnaires": {
+                "title": "Questionnaires",
+                "colors": ["light-blue", "coral"],
+                "types": ["list", "review"],
+                "with_dates": False,
+            },
+            "andrew": {
+                "title": "Andrew",
+                "colors": ["blue"],
+                "types": ["list", "review"],
+                "with_dates": False,
+                "users": ["AJP"],
+            },
+            "insurance": {
+                "title": "Insurance",
+                "colors": ["hot-pink", "light-pink"],
+                "types": ["list"],
+                "with_dates": False,
             },
         }
         self.load_config()
@@ -94,6 +115,8 @@ class AsanaClient:
 
     def save_config(self, key: str, value: str) -> None:
         """Save configuration to keyring and update client"""
+        if key == "initials":
+            value = value.upper()
         keyring.set_password("asana", key, value)
         self.config[key] = value
         if all(self.config.values()):
@@ -128,20 +151,24 @@ class AsanaClient:
 
         max_retries = 3
         retry_delay = 1
+        all_projects = []
 
         for attempt in range(max_retries):
             try:
                 print("Fetching fresh projects data...")
-                api_response: list[dict] = list(
-                    self.projects_api.get_projects_for_workspace(
-                        self.config["workspace"],
-                        opts,  # type: ignore
-                    )
+                api_response = self.projects_api.get_projects_for_workspace(
+                    self.config["workspace"],
+                    opts,  # type: ignore
                 )
-                self.cached_projects = api_response
+
+                # Collect all projects from pagination
+                for project in api_response:
+                    all_projects.append(project)
+
+                self.cached_projects = all_projects
                 self.last_fetch_time = current_time
-                print(f"{len(api_response)} projects found.")
-                return api_response
+                print(f"{len(all_projects)} projects found.")
+                return all_projects
 
             except ApiException as e:
                 if e.status == 503 and attempt < max_retries - 1:
@@ -155,12 +182,15 @@ class AsanaClient:
                 return None
 
     def filter_projects(
-        self, colors: list[str] | str | None = None, with_dates: bool = False
+        self,
+        projects: list[dict],
+        colors: list[str] | str | None = None,
+        with_dates: bool = False,
     ) -> list[dict]:
-        if not self.cached_projects:
+        if not projects:
             return []
 
-        filtered = self.cached_projects
+        filtered = projects
 
         if colors:
             if isinstance(colors, str):
@@ -258,6 +288,8 @@ def create_app():
 
     async def initialize_app():
         nonlocal is_initialized
+        if is_initialized:
+            return True
         if client.is_configured and not is_initialized:
             await client.fetch_projects()
             is_initialized = True
@@ -267,21 +299,15 @@ def create_app():
         with_dates: bool = False,
         sort_by_creation: bool = False,
     ):
-        """Reusable function to display filtered projects as a list"""
-        spinning = ui.spinner(type="dots", size="xl")
-
         projects = await client.fetch_projects()
         if not projects:
-            spinning.visible = False
             ui.label("No projects found")
             return
 
-        filtered_projects = client.filter_projects(colors, with_dates)
+        filtered_projects = client.filter_projects(projects, colors, with_dates)
 
         if sort_by_creation:
             filtered_projects.sort(key=lambda p: p["created_at"])
-
-        spinning.visible = False
 
         def open_all_links():
             for project in filtered_projects:
@@ -389,52 +415,62 @@ def create_app():
         content_container.set_visibility(False)
         with content_container:
             with ui.row():
+                user_initials = client.config.get("initials")
+
+                hide_buttons = False
+                if user_initials:
+                    for config in client.page_configs.values():
+                        if "users" in config and user_initials in config["users"]:
+                            hide_buttons = True
+                            break
                 with ui.column():
-                    ui.label("Get list of:").classes("text-lg")
-                    ui.link("all (debug page)", "/all")
+                    ui.label("List:").classes("text-lg")
 
-                    ui.button(
-                        "Questionnaires",
-                        on_click=lambda: ui.navigate.to("/list/light-blue,coral"),
-                    ).classes(
-                        f"!bg-gradient-to-r from-[{client.colors['light-blue']['color']}] to-[{client.colors['coral']['color']}] !text-black"
-                    )
+                    for config_key, config in client.page_configs.items():
+                        if hide_buttons:
+                            if "users" not in config or user_initials not in config.get(
+                                "users", []
+                            ):
+                                continue
 
-                    ui.button(
-                        "Blue (Andrew)", on_click=lambda: ui.navigate.to("/list/blue")
-                    ).classes(f"!bg-[{client.colors['blue']['color']}] !text-black")
+                        if "list" in config.get("types", []):
+                            button = ui.button(
+                                config["title"],
+                                on_click=lambda p=",".join(
+                                    config["colors"]
+                                ): ui.navigate.to(f"/list/{p}"),
+                            )
 
-                    ui.button(
-                        "Pink (Insurance)",
-                        on_click=lambda: ui.navigate.to("/list/hot-pink,light-pink"),
-                    )
+                            def get_button_style(color_list):
+                                if len(color_list) > 1:
+                                    return f"!bg-gradient-to-r from-[{client.colors[color_list[0]]['color']}] to-[{client.colors[color_list[1]]['color']}] !text-black"
+                                return f"!bg-[{client.colors[color_list[0]]['color']}] !text-black"
 
-                    for color, config in client.colors.items():
-                        text = f"{color.capitalize()}s"
-                        if config["include_dates"]:
-                            text += " with dates"
-
-                        ui.button(
-                            text,
-                            on_click=lambda c=color,
-                            d=config["include_dates"]: ui.navigate.to(
-                                f"/list/{c}?with_dates={d}"
-                            ),
-                        ).classes(f"!bg-[{config['color']}] !text-black")
+                            button.classes(get_button_style(config["colors"]))
 
                 with ui.column():
                     ui.label("Review:").classes("text-lg")
-                    for color, config in client.colors.items():
-                        text = f"{color.capitalize()}s"
-                        if config["include_dates"]:
-                            text += " with dates"
+                    for config_key, config in client.page_configs.items():
+                        if hide_buttons:
+                            if "users" not in config or user_initials not in config.get(
+                                "users", []
+                            ):
+                                continue
+                        if "review" in config.get("types", []):
+                            button = ui.button(
+                                config["title"],
+                                on_click=lambda p=",".join(
+                                    config["colors"]
+                                ): ui.navigate.to(f"/review/{p}"),
+                            )
 
-                        ui.button(
-                            text,
-                            on_click=lambda c=color: ui.navigate.to(
-                                f"/review/{c}?with_dates={config['include_dates']}"
-                            ),
-                        ).classes(f"!bg-[{config['color']}] !text-black")
+                            # Apply button styling based on configured colors
+                            def get_button_style(color_list):
+                                if len(color_list) > 1:
+                                    return f"!bg-gradient-to-r from-[{client.colors[color_list[0]]['color']}] to-[{client.colors[color_list[1]]['color']}] !text-black"
+                                return f"!bg-[{client.colors[color_list[0]]['color']}] !text-black"
+
+                            button.classes(get_button_style(config["colors"]))
 
         async def init():
             nonlocal loading
@@ -450,30 +486,30 @@ def create_app():
 
         ui.timer(0.2, init)
 
-    @ui.page("/all")
-    async def all_projects():
-        create_header()
-        ui.label("All projects")
-
-        projects = await client.fetch_projects()
-
-        if projects:
-            colors_seen = set()
-            for project in projects:
-                color = project["color"]
-                if color not in colors_seen:
-                    colors_seen.add(color)
-                    ui.link(
-                        f"Color: {color} (Example: {project['name']}",
-                        project["permalink_url"],
-                        True,
-                    )
-
     @ui.page("/list/{colors}")
     async def list_colors(colors: str, with_dates: bool = False):
         create_header()
         color_list = colors.split(",")
         internal_colors = []
+
+        matching_config = None
+        for config in client.page_configs.values():
+            if (
+                sorted(color_list) == sorted(config["colors"])
+                and "list" in config["types"]
+            ):
+                matching_config = config
+                break
+
+        if matching_config:
+            page_title = matching_config["title"]
+            with_dates = matching_config.get("with_dates", with_dates)
+        else:
+            page_title = ", ".join(c.capitalize() + "s" for c in color_list)
+            if with_dates:
+                page_title += " with dates"
+
+        ui.label(f"{page_title} (click to open in Asana)").classes("text-lg")
 
         for color in color_list:
             internal_color = client.colors.get(color)
@@ -481,11 +517,6 @@ def create_app():
                 ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
                 return
             internal_colors.append(internal_color["name"])
-
-        color_names = ", ".join(c.capitalize() + "s" for c in color_list)
-        ui.label(
-            f"{color_names}{' with dates' if with_dates else ''} (click to open in Asana)"
-        ).classes("text-lg")
 
         await display_projects(colors=internal_colors, with_dates=with_dates)
 
@@ -496,6 +527,25 @@ def create_app():
         color_list = colors.split(",")
         internal_colors = []
 
+        matching_config = None
+        for config in client.page_configs.values():
+            if (
+                sorted(color_list) == sorted(config["colors"])
+                and "review" in config["types"]
+            ):
+                matching_config = config
+                break
+
+        if matching_config:
+            page_title = matching_config["title"]
+            with_dates = matching_config.get("with_dates", with_dates)
+        else:
+            page_title = ", ".join(c.capitalize() + "s" for c in color_list)
+            if with_dates:
+                page_title += " with dates"
+
+        ui.label(f"Reviewing {page_title}").classes("text-lg")
+
         for color in color_list:
             internal_color = client.colors.get(color)
             if not internal_color:
@@ -503,13 +553,17 @@ def create_app():
                 return
             internal_colors.append(internal_color["name"])
 
-        color_names = ", ".join(color_list)
-        ui.label(f"Reviewing {color_names} projects").classes("text-lg")
+        projects = await client.fetch_projects()
+        if not projects:
+            ui.label("No projects found")
+            return
 
-        filtered_projects = client.filter_projects(internal_colors, with_dates)
+        filtered_projects = client.filter_projects(
+            projects, internal_colors, with_dates
+        )
 
         if not filtered_projects:
-            ui.label(f"No projects found for colors: {color_names}")
+            ui.label("No projects found.")
             return
 
         current_index = 0
