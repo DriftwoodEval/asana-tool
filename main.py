@@ -222,7 +222,7 @@ def create_app():
             is_initialized = True
 
     async def display_projects(
-        color: str | None = None,
+        colors: str | list[str] | None = None,
         with_dates: bool = False,
         sort_by_creation: bool = False,
     ):
@@ -235,7 +235,7 @@ def create_app():
             ui.label("No projects found")
             return
 
-        filtered_projects = client.filter_projects(color, with_dates)
+        filtered_projects = client.filter_projects(colors, with_dates)
 
         if sort_by_creation:
             filtered_projects.sort(key=lambda p: p["created_at"])
@@ -246,7 +246,10 @@ def create_app():
             for project in filtered_projects:
                 ui.navigate.to(project["permalink_url"], new_tab=True)
 
-        ui.button("Open All Links in Asana", on_click=open_all_links).classes("mb-4")
+        if len(filtered_projects) <= 10:
+            ui.button("Open All Links in Asana", on_click=open_all_links).classes(
+                "mb-4"
+            )
 
         for project in filtered_projects:
             ui.link(project["name"], project["permalink_url"], new_tab=True)
@@ -343,6 +346,12 @@ def create_app():
             with ui.column():
                 ui.label("Get list of:").classes("text-lg")
                 ui.link("all (debug page)", "/all")
+                ui.button(
+                    "Questionnaires",
+                    on_click=lambda: ui.navigate.to("/list/light-blue,coral"),
+                ).classes(
+                    f"!bg-gradient-to-r from-[{client.colors['light-blue']['color']}] to-[{client.colors['coral']['color']}] !text-black"
+                )
 
                 for color, config in client.colors.items():
                     text = f"{color.capitalize()}s"
@@ -353,7 +362,7 @@ def create_app():
                         text,
                         on_click=lambda c=color,
                         d=config["include_dates"]: ui.navigate.to(
-                            f"/{c}?with_dates={d}"
+                            f"/list/{c}?with_dates={d}"
                         ),
                     ).classes(f"!bg-[{config['color']}] !text-black")
 
@@ -399,33 +408,47 @@ def create_app():
                         True,
                     )
 
-    @ui.page("/{color}")
-    async def list_color(color: str, with_dates: bool = False):
+    @ui.page("/list/{colors}")
+    async def list_colors(colors: str, with_dates: bool = False):
         create_header()
+        color_list = colors.split(",")
+        internal_colors = []
+
+        for color in color_list:
+            internal_color = client.colors.get(color)
+            if not internal_color:
+                ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
+                return
+            internal_colors.append(internal_color["name"])
+
+        color_names = ", ".join(c.capitalize() + "s" for c in color_list)
         ui.label(
-            f"{color.capitalize()}s{" with dates" if with_dates else ""} (click to open in Asana)"
+            f"{color_names}{' with dates' if with_dates else ''} (click to open in Asana)"
         ).classes("text-lg")
-        internal_color = client.colors.get(color)
-        if not internal_color:
-            ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
-            return
-        internal_color = internal_color["name"]
-        await display_projects(color=internal_color, with_dates=with_dates)
 
-    @ui.page("/review/{color}")
-    async def review_projects(color: str, with_dates: bool = False):
+        await display_projects(colors=internal_colors, with_dates=with_dates)
+
+    @ui.page("/review/{colors}")
+    async def review_projects(colors: str, with_dates: bool = False):
         create_header(refresh=False)
-        internal_color = client.colors.get(color)
-        if not internal_color:
-            ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
-            return
-        internal_color = internal_color["name"]
-        ui.label(f"Reviewing {color} projects").classes("text-lg")
 
-        filtered_projects = client.filter_projects(internal_color, with_dates)
+        color_list = colors.split(",")
+        internal_colors = []
+
+        for color in color_list:
+            internal_color = client.colors.get(color)
+            if not internal_color:
+                ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
+                return
+            internal_colors.append(internal_color["name"])
+
+        color_names = ", ".join(color_list)
+        ui.label(f"Reviewing {color_names} projects").classes("text-lg")
+
+        filtered_projects = client.filter_projects(internal_colors, with_dates)
 
         if not filtered_projects:
-            ui.label(f"No {color} projects found")
+            ui.label(f"No projects found for colors: {color_names}")
             return
 
         current_index = 0
