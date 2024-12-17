@@ -7,7 +7,7 @@ multiprocessing.set_start_method("spawn", force=True)
 import re
 import time
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 import asana
 import keyring
@@ -158,11 +158,11 @@ class AsanaClient:
                 print("Fetching fresh projects data...")
                 api_response = self.projects_api.get_projects_for_workspace(
                     self.config["workspace"],
-                    opts,  # type: ignore
+                    opts,
                 )
 
                 # Collect all projects from pagination
-                for project in api_response:
+                for project in api_response:  # type: ignore
                     all_projects.append(project)
 
                 self.cached_projects = all_projects
@@ -405,6 +405,42 @@ def create_app():
         # Update the staleness display every second
         ui.timer(1.0, display_staleness.refresh)
 
+    def create_colored_button(title: str, colors: list[str], on_click: Callable):
+        button = ui.button(title, on_click=on_click)
+
+        def get_button_style(color_list):
+            if len(color_list) > 1:
+                return f"!bg-gradient-to-r from-[{client.colors[color_list[0]]['color']}] to-[{client.colors[color_list[1]]['color']}] !text-black"
+            return f"!bg-[{client.colors[color_list[0]]['color']}] !text-black"
+
+        button.classes(get_button_style(colors))
+        return button
+
+    def validate_colors(
+        colors: str,
+    ) -> tuple[dict[str, str | list[str] | bool] | None, list[str], str]:
+        color_list = colors.split(",")
+        internal_colors = []
+
+        matching_config = None
+        for config in client.page_configs.values():
+            if sorted(color_list) == sorted(config["colors"]):
+                matching_config = config
+                break
+
+        if matching_config:
+            page_title = matching_config["title"]
+        else:
+            page_title = ", ".join(c.capitalize() + "s" for c in color_list)
+
+        for color in color_list:
+            internal_color = client.colors.get(color)
+            if not internal_color:
+                raise ValueError(f"Invalid color: {color}")
+            internal_colors.append(internal_color["name"])
+
+        return matching_config, internal_colors, page_title
+
     @ui.page("/")
     def root():
         create_header(root_page=True)
@@ -434,19 +470,13 @@ def create_app():
                                 continue
 
                         if "list" in config.get("types", []):
-                            button = ui.button(
+                            create_colored_button(
                                 config["title"],
-                                on_click=lambda p=",".join(
-                                    config["colors"]
-                                ): ui.navigate.to(f"/list/{p}"),
+                                config["colors"],
+                                lambda p=",".join(config["colors"]): ui.navigate.to(
+                                    f"/list/{p}"
+                                ),
                             )
-
-                            def get_button_style(color_list):
-                                if len(color_list) > 1:
-                                    return f"!bg-gradient-to-r from-[{client.colors[color_list[0]]['color']}] to-[{client.colors[color_list[1]]['color']}] !text-black"
-                                return f"!bg-[{client.colors[color_list[0]]['color']}] !text-black"
-
-                            button.classes(get_button_style(config["colors"]))
 
                 with ui.column():
                     ui.label("Review:").classes("text-lg")
@@ -487,162 +517,117 @@ def create_app():
         ui.timer(0.2, init)
 
     @ui.page("/list/{colors}")
-    async def list_colors(colors: str, with_dates: bool = False):
+    async def list_colors(colors: str):
         create_header()
-        color_list = colors.split(",")
-        internal_colors = []
-
-        matching_config = None
-        for config in client.page_configs.values():
-            if (
-                sorted(color_list) == sorted(config["colors"])
-                and "list" in config["types"]
-            ):
-                matching_config = config
-                break
-
-        if matching_config:
-            page_title = matching_config["title"]
-            with_dates = matching_config.get("with_dates", with_dates)
-        else:
-            page_title = ", ".join(c.capitalize() + "s" for c in color_list)
-            if with_dates:
-                page_title += " with dates"
+        matching_config, internal_colors, page_title = validate_colors(colors)
 
         ui.label(f"{page_title} (click to open in Asana)").classes("text-lg")
 
-        for color in color_list:
-            internal_color = client.colors.get(color)
-            if not internal_color:
-                ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
-                return
-            internal_colors.append(internal_color["name"])
-
-        await display_projects(colors=internal_colors, with_dates=with_dates)
+        if matching_config:
+            await display_projects(
+                colors=internal_colors, with_dates=bool(matching_config["with_dates"])
+            )
 
     @ui.page("/review/{colors}")
-    async def review_projects(colors: str, with_dates: bool = False):
+    async def review_projects(colors: str):
         create_header(refresh=False)
-
-        color_list = colors.split(",")
-        internal_colors = []
-
-        matching_config = None
-        for config in client.page_configs.values():
-            if (
-                sorted(color_list) == sorted(config["colors"])
-                and "review" in config["types"]
-            ):
-                matching_config = config
-                break
-
-        if matching_config:
-            page_title = matching_config["title"]
-            with_dates = matching_config.get("with_dates", with_dates)
-        else:
-            page_title = ", ".join(c.capitalize() + "s" for c in color_list)
-            if with_dates:
-                page_title += " with dates"
+        matching_config, internal_colors, page_title = validate_colors(colors)
 
         ui.label(f"Reviewing {page_title}").classes("text-lg")
 
-        for color in color_list:
-            internal_color = client.colors.get(color)
-            if not internal_color:
-                ui.label(f"Invalid color: {color}").classes("text-lg text-red-500")
+        if matching_config:
+            projects = await client.fetch_projects()
+            if not projects:
+                ui.label("No projects found")
                 return
-            internal_colors.append(internal_color["name"])
 
-        projects = await client.fetch_projects()
-        if not projects:
-            ui.label("No projects found")
-            return
+            filtered_projects = client.filter_projects(
+                projects,
+                internal_colors,
+                with_dates=bool(matching_config["with_dates"]),
+            )
 
-        filtered_projects = client.filter_projects(
-            projects, internal_colors, with_dates
-        )
+            if not filtered_projects:
+                ui.label("No projects found.")
+                return
 
-        if not filtered_projects:
-            ui.label("No projects found.")
-            return
+            current_index = 0
 
-        current_index = 0
+            @ui.refreshable
+            def show_current_project():
+                nonlocal current_index
+                with ui.card().classes("w-full max-w-2xl mx-auto p-4"):
+                    if current_index >= len(filtered_projects):
+                        ui.label("No more projects to review!").classes("text-xl")
+                        return
 
-        @ui.refreshable
-        def show_current_project():
-            nonlocal current_index
-            with ui.card().classes("w-full max-w-2xl mx-auto p-4"):
-                if current_index >= len(filtered_projects):
-                    ui.label("No more projects to review!").classes("text-xl")
-                    return
+                    project = filtered_projects[current_index]
 
-                project = filtered_projects[current_index]
+                    ui.label(
+                        f"Project {current_index + 1} of {len(filtered_projects)}"
+                    ).classes("text-sm text-gray-500")
+                    ui.label(project["name"]).classes("text-xl font-bold")
 
-                ui.label(
-                    f"Project {current_index + 1} of {len(filtered_projects)}"
-                ).classes("text-sm text-gray-500")
-                ui.label(project["name"]).classes("text-xl font-bold")
+                    if project.get("notes"):
+                        ui.label("Notes:").classes("font-bold")
+                        ui.label(project["notes"]).classes("whitespace-pre-wrap")
 
-                if project.get("notes"):
-                    ui.label("Notes:").classes("font-bold")
-                    ui.label(project["notes"]).classes("whitespace-pre-wrap")
+                    def add_note():
+                        with ui.dialog() as dialog, ui.card().classes("w-96"):
+                            note_input = ui.input("Enter note").classes("w-full")
 
-                def add_note():
-                    with ui.dialog() as dialog, ui.card().classes("w-96"):
-                        note_input = ui.input("Enter note").classes("w-full")
+                            def submit():
+                                if note_input.value:
+                                    client.add_note(note_input.value, project["gid"])
+                                    dialog.close()
 
-                        def submit():
-                            if note_input.value:
-                                client.add_note(note_input.value, project["gid"])
-                                dialog.close()
+                            with ui.row():
+                                ui.button("Submit", on_click=submit)
+                                ui.button("Cancel", on_click=dialog.close)
+                        dialog.open()
 
-                        with ui.row():
-                            ui.button("Submit", on_click=submit)
-                            ui.button("Cancel", on_click=dialog.close)
-                    dialog.open()
-
-                with ui.row():
-                    ui.button(
-                        "Open in Asana",
-                        on_click=lambda: ui.navigate.to(
-                            project["permalink_url"], new_tab=True
-                        ),
-                    )
-
-                    ui.button(
-                        "Add note",
-                        on_click=add_note,
-                    )
-
-                with ui.row().classes("w-full justify-between mt-4"):
-
-                    def go_previous():
-                        nonlocal current_index
-                        current_index = max(0, current_index - 1)
-                        show_current_project.refresh()
-
-                    def go_next():
-                        nonlocal current_index
-                        current_index = min(
-                            len(filtered_projects) - 1, current_index + 1
+                    with ui.row():
+                        ui.button(
+                            "Open in Asana",
+                            on_click=lambda: ui.navigate.to(
+                                project["permalink_url"], new_tab=True
+                            ),
                         )
-                        show_current_project.refresh()
 
-                    prev_button = ui.button("Previous", on_click=go_previous).props(
-                        "icon=arrow_back"
-                    )
+                        ui.button(
+                            "Add note",
+                            on_click=add_note,
+                        )
 
-                    next_button = ui.button(
-                        "Skip/Next",
-                        on_click=go_next,
-                    ).props("icon=arrow_forward")
+                    with ui.row().classes("w-full justify-between mt-4"):
 
-                    if current_index <= 0:
-                        prev_button.disable()
-                    if current_index >= len(filtered_projects) - 1:
-                        next_button.disable()
+                        def go_previous():
+                            nonlocal current_index
+                            current_index = max(0, current_index - 1)
+                            show_current_project.refresh()
 
-        show_current_project()
+                        def go_next():
+                            nonlocal current_index
+                            current_index = min(
+                                len(filtered_projects) - 1, current_index + 1
+                            )
+                            show_current_project.refresh()
+
+                        prev_button = ui.button("Previous", on_click=go_previous).props(
+                            "icon=arrow_back"
+                        )
+
+                        next_button = ui.button(
+                            "Skip/Next",
+                            on_click=go_next,
+                        ).props("icon=arrow_forward")
+
+                        if current_index <= 0:
+                            prev_button.disable()
+                        if current_index >= len(filtered_projects) - 1:
+                            next_button.disable()
+
+            show_current_project()
 
     ui.run(native=True, title="Asana Tool")
 
