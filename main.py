@@ -113,6 +113,12 @@ class AsanaClient:
                 "colors": ["light-blue", "coral"],
                 "types": ["list", "review"],
             },
+            "other": {
+                "title": "Other Projects",
+                "colors": [],
+                "types": ["list"],
+                "is_other": True,
+            },
         }
         self.load_config()
 
@@ -256,16 +262,24 @@ class AsanaClient:
         colors: list[str] | str | None = None,
         with_dates: bool = False,
         ifsp_only: bool = False,
-    ) -> list[dict]:
+        is_other: bool = False,
+    ) -> tuple[list[dict], int]:
         if not projects:
             return []
 
         filtered = [p for p in projects if not self.is_on_hold(p)]
 
-        if colors:
-            if isinstance(colors, str):
-                colors = [colors]
-            filtered = [p for p in filtered if p["color"] in colors]
+        if is_other:
+            used_colors = set()
+            for config in self.page_configs.values():
+                if config.get("colors") and not config.get("is_other"):
+                    for color in config["colors"]:
+                        used_colors.add(self.colors[color]["name"])
+
+            filtered = [p for p in filtered if p["color"] not in used_colors]
+        elif colors:
+            internal_colors = [self.colors[c]["name"] for c in colors]
+            filtered = [p for p in filtered if p["color"] in internal_colors]
 
         if with_dates:
             filtered = [
@@ -373,6 +387,7 @@ def create_app():
         with_dates: bool = False,
         sort_by_creation: bool = False,
         ifsp_only: bool = False,
+        is_other: bool = False,
     ):
         page_title = ui.label(f"{title}").classes("text-lg")
 
@@ -383,6 +398,7 @@ def create_app():
 
         filtered_projects = client.filter_projects(
             projects, colors, with_dates, ifsp_only
+            projects, colors, with_dates, ifsp_only, is_other
         )
 
         if sort_by_creation:
@@ -400,7 +416,12 @@ def create_app():
         page_title.set_text(f"{title} ({len(filtered_projects)})")
 
         for project in filtered_projects:
-            ui.link(project["name"], project["permalink_url"], new_tab=True)
+            link_text = (
+                f"{project['name']} ({project['color']})"
+                if is_other
+                else project["name"]
+            )
+            ui.link(link_text, project["permalink_url"], new_tab=True)
 
     def show_settings(force: bool = False):
         with ui.dialog() as dialog, ui.card().classes("w-96"):
@@ -517,10 +538,12 @@ def create_app():
     def create_colored_button(title: str, colors: list[str], on_click: Callable):
         button = ui.button(title, on_click=on_click)
 
-        def get_button_style(color_list):
-            if len(color_list) > 1:
-                return f"!bg-gradient-to-r from-[{client.colors[color_list[0]]['color']}] to-[{client.colors[color_list[1]]['color']}] !text-black"
-            return f"!bg-[{client.colors[color_list[0]]['color']}] !text-black"
+        def get_button_style(colors):
+            if isinstance(colors, list):
+                if len(colors) > 1:
+                    return f"!bg-gradient-to-r from-[{client.colors[colors[0]]['color']}] to-[{client.colors[colors[1]]['color']}] !text-black"
+                return f"!bg-[{client.colors[colors[0]]['color']}] !text-black"
+            return f"!bg=[{client.colors[colors]['colors']}] !text-black"
 
         button.classes(get_button_style(colors))
         return button
@@ -558,11 +581,19 @@ def create_app():
                             continue
 
                         if "list" in config.get("types", []):
-                            create_colored_button(
-                                config["title"],
-                                config["colors"],
-                                lambda k=config_key: ui.navigate.to(f"/list/{k}"),
-                            )
+                            if config.get("is_other"):
+                                ui.button(
+                                    config["title"],
+                                    on_click=lambda k=config_key: ui.navigate.to(
+                                        f"/list/{k}"
+                                    ),
+                                ).classes("!bg-gray-400 !text-black")
+                            else:
+                                create_colored_button(
+                                    config["title"],
+                                    config["colors"],
+                                    lambda k=config_key: ui.navigate.to(f"/list/{k}"),
+                                )
 
                 with ui.column():
                     ui.label("Review:").classes("text-lg")
@@ -571,11 +602,19 @@ def create_app():
                             continue
 
                         if "review" in config.get("types", []):
-                            create_colored_button(
-                                config["title"],
-                                config["colors"],
-                                lambda k=config_key: ui.navigate.to(f"/review/{k}"),
-                            )
+                            if config.get("is_other"):
+                                ui.button(
+                                    config["title"],
+                                    on_click=lambda k=config_key: ui.navigate.to(
+                                        f"/review/{k}"
+                                    ),
+                                ).classes("!bg-gray-400 !text-black")
+                            else:
+                                create_colored_button(
+                                    config["title"],
+                                    config["colors"],
+                                    lambda k=config_key: ui.navigate.to(f"/review/{k}"),
+                                )
 
         async def init():
             nonlocal loading
@@ -600,13 +639,21 @@ def create_app():
             ui.label("Invalid configuration").classes("text-lg")
             return
 
-        internal_colors = [client.colors[c]["name"] for c in config["colors"]]
-        await display_projects(
-            title=config["title"],
-            colors=internal_colors,
-            with_dates=config.get("with_dates", False),
-            ifsp_only=config.get("ifsp_only", False),
-        )
+        if config.get("is_other"):
+            await display_projects(
+                title=config["title"],
+                colors=[],
+                with_dates=config.get("with_dates", False),
+                ifsp_only=config.get("ifsp_only", False),
+                is_other=True,
+            )
+        else:
+            await display_projects(
+                title=config["title"],
+                colors=config["colors"],
+                with_dates=config.get("with_dates", False),
+                ifsp_only=config.get("ifsp_only", False),
+            )
 
     @ui.page("/review/{config_key}")
     async def review_projects(config_key: str):
@@ -623,10 +670,9 @@ def create_app():
             ui.label("No projects found")
             return
 
-        internal_colors = [client.colors[c]["name"] for c in config["colors"]]
         filtered_projects = client.filter_projects(
             projects,
-            internal_colors,
+            colors=config["colors"],
             with_dates=config.get("with_dates", False),
             ifsp_only=config.get("ifsp_only", False),
         )
@@ -713,7 +759,7 @@ def create_app():
 
         show_current_project()
 
-    ui.run(native=False, title="Asana Tool")
+    ui.run(native=True, title="Asana Tool")
 
 
 create_app()
