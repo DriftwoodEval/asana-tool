@@ -1,6 +1,6 @@
 import asyncio
 import multiprocessing
-from datetime import datetime
+from datetime import date, datetime
 
 # Bizarrely, this needs to be up here for native mode, don't move it
 multiprocessing.set_start_method("spawn", force=True)
@@ -75,12 +75,6 @@ class AsanaClient:
             },
         }
         self.page_configs = {
-            "questionnaires": {
-                "title": "Questionnaires",
-                "colors": ["light-blue", "coral"],
-                "types": ["list", "review"],
-                "with_dates": False,
-            },
             "andrew": {
                 "title": "Andrew",
                 "colors": ["blue"],
@@ -88,10 +82,40 @@ class AsanaClient:
                 "with_dates": False,
                 "users": ["AJP"],
             },
+            "babynet": {
+                "title": "BabyNet",
+                "colors": ["orange"],
+                "types": ["list"],
+                "with_dates": False,
+            },
+            "barbara": {
+                "title": "Barbara and New Referrals",
+                "colors": ["yellow"],
+                "types": ["list"],
+                "with_dates": False,
+            },
+            "deadlines": {
+                "title": "Deadlines",
+                "colors": ["purple", "dark-purple"],
+                "types": ["list"],
+                "with_dates": True,
+            },
             "insurance": {
                 "title": "Insurance",
                 "colors": ["hot-pink", "light-pink"],
                 "types": ["list"],
+                "with_dates": False,
+            },
+            "needs-scheduling": {
+                "title": "Needs to Be Scheduled",
+                "colors": ["purple", "dark-purple"],
+                "types": ["list"],
+                "with_dates": False,
+            },
+            "questionnaires": {
+                "title": "Questionnaires",
+                "colors": ["light-blue", "coral"],
+                "types": ["list", "review"],
                 "with_dates": False,
             },
         }
@@ -181,6 +205,50 @@ class AsanaClient:
                 )
                 return None
 
+    def is_on_hold(self, project: dict) -> bool:
+        if not project.get("notes"):
+            return False
+
+        user_initials = self.config.get("initials")
+        if not user_initials:
+            return False
+
+        notes = project["notes"]
+        hold_pattern = re.compile(r"hold (\d{1,2}/\d{1,2}(?:/\d{2,4})?) (\w+)")
+
+        for match in hold_pattern.finditer(notes):
+            date_str, initials = match.groups()
+
+            if initials.upper() != user_initials.upper():
+                continue
+
+            try:
+                hold_date = None
+                # Handle different date formats
+                if "/" in date_str:
+                    if date_str.count("/") == 1:
+                        hold_date = (
+                            datetime.strptime(date_str, "%m/%d")
+                            .replace(year=date.today().year)
+                            .date()
+                        )
+                    else:
+                        # Handle 2 or 4 digit years
+                        try:
+                            hold_date = datetime.strptime(date_str, "%m/%d/%Y").date()
+                        except ValueError:
+                            hold_date = datetime.strptime(date_str, "%m/%d/%y").date()
+
+                if hold_date is not None:
+                    # If hold date is today or in the future, project should be hidden
+                    return hold_date >= date.today()
+
+            except ValueError:
+                print(f"Invalid date format in hold entry: {date_str}")
+                continue
+
+        return False
+
     def filter_projects(
         self,
         projects: list[dict],
@@ -190,7 +258,7 @@ class AsanaClient:
         if not projects:
             return []
 
-        filtered = projects
+        filtered = [p for p in projects if not self.is_on_hold(p)]
 
         if colors:
             if isinstance(colors, str):
@@ -385,6 +453,10 @@ def create_app():
 
         return ui.label(f"Data age: {time_text}").classes("text-white")
 
+    async def refresh_projects():
+        await client.fetch_projects(force=True)
+        ui.navigate.reload()
+
     def create_header(refresh=True, root_page=False):
         with ui.header().classes("items-center justify-between"):
             ui.link("Asana Tool", "/").classes(
@@ -394,7 +466,7 @@ def create_app():
                 if refresh:
                     display_staleness()
                     ui.button(
-                        on_click=lambda: client.fetch_projects(force=True),
+                        on_click=lambda: refresh_projects(),
                         icon="refresh",
                     ).props("flat color=white")
                 if root_page:
