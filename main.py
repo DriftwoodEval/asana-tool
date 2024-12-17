@@ -215,7 +215,9 @@ class AsanaClient:
             return False
 
         notes = project["notes"]
-        hold_pattern = re.compile(r"hold (\d{1,2}/\d{1,2}(?:/\d{2,4})?) (\w+)")
+        hold_pattern = re.compile(
+            r"(?:.*?\s)?hold\s+(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s+[/]*(\w+)[/]*"
+        )
 
         for match in hold_pattern.finditer(notes):
             date_str, initials = match.groups()
@@ -265,8 +267,9 @@ class AsanaClient:
         is_other: bool = False,
     ) -> tuple[list[dict], int]:
         if not projects:
-            return []
+            return [], 0
 
+        held_projects = sum(1 for p in projects if self.is_on_hold(p))
         filtered = [p for p in projects if not self.is_on_hold(p)]
 
         if is_other:
@@ -291,7 +294,7 @@ class AsanaClient:
         if ifsp_only:
             filtered = [p for p in filtered if self.has_ifsp(p)]
 
-        return filtered
+        return filtered, held_projects
 
     def fetch_project(
         self,
@@ -350,7 +353,7 @@ class AsanaClient:
         new_note = today_str + " " + new_note
         initials = self.config.get("initials")
         if initials:
-            new_note += " " + initials
+            new_note += " ///" + initials
 
         current_project: dict[str, str] | None = self.fetch_project(project_gid)
         if current_project:
@@ -396,8 +399,7 @@ def create_app():
             ui.label("No projects found")
             return
 
-        filtered_projects = client.filter_projects(
-            projects, colors, with_dates, ifsp_only
+        filtered_projects, held_count = client.filter_projects(
             projects, colors, with_dates, ifsp_only, is_other
         )
 
@@ -413,7 +415,10 @@ def create_app():
                 "mb-4"
             )
 
-        page_title.set_text(f"{title} ({len(filtered_projects)})")
+        title_text = f"{title} ({len(filtered_projects)})"
+        if held_count > 0:
+            title_text += f" [{held_count} on hold]"
+        page_title.set_text(title_text)
 
         for project in filtered_projects:
             link_text = (
@@ -670,7 +675,7 @@ def create_app():
             ui.label("No projects found")
             return
 
-        filtered_projects = client.filter_projects(
+        filtered_projects, held_count = client.filter_projects(
             projects,
             colors=config["colors"],
             with_dates=config.get("with_dates", False),
@@ -680,6 +685,11 @@ def create_app():
         if not filtered_projects:
             ui.label("No projects found.")
             return
+
+        if held_count > 0:
+            ui.label(
+                f"[{held_count} {'project' if held_count == 1 else 'projects'} on hold]"
+            ).classes("text-sm text-gray-500")
 
         current_index = 0
 
@@ -716,6 +726,33 @@ def create_app():
                             ui.button("Cancel", on_click=dialog.close)
                     dialog.open()
 
+                def add_hold():
+                    with ui.dialog() as dialog, ui.card().classes("w-96"):
+                        hold_input = (
+                            ui.date()
+                            .classes("w-full")
+                            .props(
+                                ':options="date => { const today = new Date(); today.setHours(0,0,0,0); return new Date(date) > today; }"'
+                            )
+                        )
+
+                        def submit():
+                            if hold_input.value:
+                                formatted_date = datetime.fromisoformat(
+                                    hold_input.value
+                                ).strftime("%m/%d/%y")
+                                client.add_note(
+                                    f"hold {formatted_date}",
+                                    project["gid"],
+                                )
+                                dialog.close()
+                                go_next()
+
+                        with ui.row():
+                            ui.button("Submit", on_click=submit)
+                            ui.button("Cancel", on_click=dialog.close)
+                    dialog.open()
+
                 with ui.row():
                     ui.button(
                         "Open in Asana",
@@ -727,6 +764,11 @@ def create_app():
                     ui.button(
                         "Add note",
                         on_click=add_note,
+                    )
+
+                    ui.button(
+                        "Hold",
+                        on_click=add_hold,
                     )
 
                 with ui.row().classes("w-full justify-between mt-4"):
