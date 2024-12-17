@@ -457,6 +457,27 @@ def create_app():
         await client.fetch_projects(force=True)
         ui.navigate.reload()
 
+    timeout_warning = False
+
+    @ui.refreshable
+    def display_cache_warning():
+        nonlocal timeout_warning
+        if not client.last_fetch_time or timeout_warning:
+            return
+
+        elapsed_seconds = int(time.time() - client.last_fetch_time)
+        if elapsed_seconds >= client.cache_duration:
+            timeout_warning = True
+            ui.notify(
+                "Data is possibly out-of-date.",
+                position="top",
+                type="warning",
+                timeout=0,
+            )
+
+        else:
+            return
+
     def create_header(refresh=True, root_page=False):
         with ui.header().classes("items-center justify-between"):
             ui.link("Asana Tool", "/").classes(
@@ -474,8 +495,11 @@ def create_app():
                         "flat color=white"
                     )
 
-        # Update the staleness display every second
+        if refresh:
+            display_cache_warning()
+
         ui.timer(1.0, display_staleness.refresh)
+        ui.timer(1.0, display_cache_warning.refresh)
 
     def create_colored_button(title: str, colors: list[str], on_click: Callable):
         button = ui.button(title, on_click=on_click)
@@ -513,6 +537,11 @@ def create_app():
 
         return matching_config, internal_colors, page_title
 
+    def should_show_button(config, user_initials, hide_buttons):
+        if not hide_buttons:
+            return True
+        return "users" in config and user_initials in config.get("users", [])
+
     @ui.page("/")
     def root():
         create_header(root_page=True)
@@ -524,22 +553,21 @@ def create_app():
         with content_container:
             with ui.row():
                 user_initials = client.config.get("initials")
+                hide_buttons = (
+                    any(
+                        "users" in config and user_initials in config["users"]
+                        for config in client.page_configs.values()
+                    )
+                    if user_initials
+                    else False
+                )
 
-                hide_buttons = False
-                if user_initials:
-                    for config in client.page_configs.values():
-                        if "users" in config and user_initials in config["users"]:
-                            hide_buttons = True
-                            break
                 with ui.column():
                     ui.label("List:").classes("text-lg")
 
                     for config_key, config in client.page_configs.items():
-                        if hide_buttons:
-                            if "users" not in config or user_initials not in config.get(
-                                "users", []
-                            ):
-                                continue
+                        if not should_show_button(config, user_initials, hide_buttons):
+                            continue
 
                         if "list" in config.get("types", []):
                             create_colored_button(
@@ -553,26 +581,17 @@ def create_app():
                 with ui.column():
                     ui.label("Review:").classes("text-lg")
                     for config_key, config in client.page_configs.items():
-                        if hide_buttons:
-                            if "users" not in config or user_initials not in config.get(
-                                "users", []
-                            ):
-                                continue
+                        if not should_show_button(config, user_initials, hide_buttons):
+                            continue
+
                         if "review" in config.get("types", []):
-                            button = ui.button(
+                            create_colored_button(
                                 config["title"],
-                                on_click=lambda p=",".join(
-                                    config["colors"]
-                                ): ui.navigate.to(f"/review/{p}"),
+                                config["colors"],
+                                lambda p=",".join(config["colors"]): ui.navigate.to(
+                                    f"/review/{p}"
+                                ),
                             )
-
-                            # Apply button styling based on configured colors
-                            def get_button_style(color_list):
-                                if len(color_list) > 1:
-                                    return f"!bg-gradient-to-r from-[{client.colors[color_list[0]]['color']}] to-[{client.colors[color_list[1]]['color']}] !text-black"
-                                return f"!bg-[{client.colors[color_list[0]]['color']}] !text-black"
-
-                            button.classes(get_button_style(config["colors"]))
 
         async def init():
             nonlocal loading
