@@ -734,7 +734,7 @@ def create_app():
                 def add_hold():
                     with ui.dialog() as dialog, ui.card().classes("w-96"):
                         hold_input = (
-                            ui.date()
+                            ui.date(mask="MM/DD/YY")
                             .classes("w-full")
                             .props(
                                 ':options="date => { const today = new Date(); today.setHours(0,0,0,0); return new Date(date) > today; }"'
@@ -743,11 +743,8 @@ def create_app():
 
                         def submit():
                             if hold_input.value:
-                                formatted_date = datetime.fromisoformat(
-                                    hold_input.value
-                                ).strftime("%m/%d/%y")
                                 client.add_note(
-                                    f"hold {formatted_date}",
+                                    f"hold {hold_input.value}",
                                     project["gid"],
                                 )
                                 dialog.close()
