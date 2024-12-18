@@ -378,11 +378,12 @@ def create_app():
 
     async def initialize_app():
         nonlocal is_initialized
-        if is_initialized:
-            return True
-        if client.is_configured and not is_initialized:
-            await client.fetch_projects()
-            is_initialized = True
+        if is_initialized or not client.is_configured:
+            return is_initialized
+
+        result = await client.fetch_projects()
+        is_initialized = result is not None
+        return is_initialized
 
     async def display_projects(
         title: str,
@@ -622,18 +623,22 @@ def create_app():
                                 )
 
         async def init():
-            nonlocal loading
+            nonlocal loading, content_container, is_initialized
             if not client.is_configured:
                 ui.timer(0.1, lambda: show_settings(force=True), once=True)
                 return
 
-            try:
-                await initialize_app()
-            finally:
-                loading.set_visibility(False)
-                content_container.set_visibility(True)
+            if is_initialized:
+                await asyncio.sleep(
+                    0.1
+                )  # Kind of jank but I've fought with this for too long and this works
+                loading.visible = False
+                content_container.visible = True
+                return
 
-        ui.timer(0.2, init)
+            await initialize_app()
+
+        ui.timer(0.1, init)
 
     @ui.page("/list/{config_key}")
     async def list_colors(config_key: str):
