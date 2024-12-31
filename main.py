@@ -2,12 +2,14 @@ import asyncio
 import multiprocessing
 from datetime import date, datetime
 
+from nicegui.element import Element
+
 # Bizarrely, this needs to be up here for native mode, don't move it
 multiprocessing.set_start_method("spawn", force=True)
 import re
 import time
 from os import getenv
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 
 import asana
 import keyring
@@ -15,21 +17,26 @@ from asana.rest import ApiException
 from dotenv import load_dotenv
 from nicegui import ui
 
+# Load variables from .env
 load_dotenv()
 
 
 class AsanaClient:
     def __init__(self) -> None:
-        self.config: Dict[str, Optional[str]] = {
+        # Information edited in the settings menu
+        self.config: dict[str, Optional[str]] = {
             "token": None,
             "workspace": None,
             "initials": None,
         }
-        self.allowed_domains = ["mhs.com", "pearsonassessments.com"]
+        # Add projects and users API variables to store in later
         self.projects_api = None
+        self.users_api = None
+        # Add cache to store in later
         self.cached_projects = None
         self.last_fetch_time = None
         self.cache_duration = 300  # 5 minutes
+        # Dict of colors, their internal name, and hex code
         self.colors = {
             "purple": {
                 "name": "light-purple",
@@ -69,6 +76,10 @@ class AsanaClient:
                 "color": "#F9AAEF",
             },
         }
+        # Dict of buttons with title, colors to filter by, if this should be available as both list and review types,
+        # if it should only be projects with dates in the title, 'is_other', and 'users'.
+        # If a user's initials are in any users key, they will only be able to see the buttons with their initials.
+        # 'is_other' is a special page of all projects not captured by other pages.
         self.page_configs = {
             "andrew": {
                 "title": "Andrew",
@@ -120,30 +131,36 @@ class AsanaClient:
                 "is_other": True,
             },
         }
-        self.load_config()
+        self._load_config()
 
-    def load_config(self) -> None:
-        """Load configuration from environment or keyring"""
+    def _load_config(self) -> None:
+        """Load configuration from environment variables or system keyring"""
         for key in self.config:
             self.config[key] = getenv(f"ASANA_{key.upper()}") or keyring.get_password(
                 "asana", key
             )
 
+        # If we have all the config values, initialize API clients
         if all(self.config.values()):
             self._init_asana()
 
     def _init_asana(self) -> None:
-        """Initialize Asana client"""
+        """Initialize Asana API clients"""
         configuration = asana.Configuration()
         configuration.access_token = self.config["token"]  # type: ignore
         self.projects_api = asana.ProjectsApi(asana.ApiClient(configuration))
+        self.users_api = asana.UsersApi(asana.ApiClient(configuration))
 
     def save_config(self, key: str, value: str) -> None:
-        """Save configuration to keyring and update client"""
+        """Save configuration to system keyring and update API clients"""
+        # Always uppercase initials
         if key == "initials":
             value = value.upper()
+        # Set in keyring
         keyring.set_password("asana", key, value)
+        # Set in memory
         self.config[key] = value
+        # Re-init if all values are now present
         if all(self.config.values()):
             self._init_asana()
 
@@ -153,8 +170,12 @@ class AsanaClient:
         return all(self.config.values())
 
     async def fetch_projects(
-        self, opt_fields="name,color,permalink_url,notes,created_at", force=False
+        self,
+        opt_fields="name,color,permalink_url,notes,created_at,default_access_level,members",
+        force=False,
     ) -> list[dict] | None:
+        """Get either cached or new projects from Asana API if timeout has elapsed"""
+
         current_time = time.time()
 
         if (
@@ -190,6 +211,7 @@ class AsanaClient:
                 for project in api_response:  # type: ignore
                     all_projects.append(project)
 
+                # Make cache and store time
                 self.cached_projects = all_projects
                 self.last_fetch_time = current_time
                 print(f"{len(all_projects)} projects found.")
@@ -207,6 +229,7 @@ class AsanaClient:
                 return None
 
     def is_on_hold(self, project: dict) -> bool:
+        """Return True if a project has a hold date with the users initials that is after today, False if otherwise"""
         if not project.get("notes"):
             return False
 
@@ -216,7 +239,7 @@ class AsanaClient:
 
         notes = project["notes"]
         hold_pattern = re.compile(
-            r"(?:.*?\s)?hold\s+(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s+[/]*(\w+)[/]*"
+            r"(?:.*?\s)?hold\s+(\d{1,2}/\d{1,2}(?:/\d{2,4})?)\s+[/]*(\w+)[/]*"  # hold 01/31/24 JS | hold 01/31 AJP
         )
 
         for match in hold_pattern.finditer(notes):
@@ -253,6 +276,7 @@ class AsanaClient:
         return False
 
     def has_ifsp(self, project: dict) -> bool:
+        """Return True if 'IFSP' is present in the notes field, False otherwise"""
         if not project.get("notes"):
             return False
 
@@ -266,6 +290,18 @@ class AsanaClient:
         ifsp_only: bool = False,
         is_other: bool = False,
     ) -> tuple[list[dict], int]:
+        """Filter a provided projects list based on color, dates, 'IFSP' being in the notes field, or colors not used in other configs
+
+        Args:
+            projects (list[dict]): List of projects
+            colors (list[str] | str | None, optional): Colors to filter by, using external names. Defaults to None.
+            with_dates (bool, optional): Whether to filter to only projects that have dates. Defaults to False.
+            ifsp_only (bool, optional): Whether to filter to only projects that have 'IFSP' in the notes field. Defaults to False.
+            is_other (bool, optional): Whether to filter to only projects that use colors that have not been used in other configs. Defaults to False.
+
+        Returns:
+            tuple[list[dict], int]: Filtered projects and number of projects on hold.
+        """
         if not projects:
             return [], 0
 
@@ -315,6 +351,7 @@ class AsanaClient:
             return None
 
     def replace_notes(self, new_note: str, project_gid: str):
+        """Update the notes field in a project."""
         if not self.is_configured or not self.projects_api:
             return None
 
@@ -328,6 +365,7 @@ class AsanaClient:
             return f"Exception when calling ProjectsApi->update_project: {e}"
 
     def change_color(self, new_color: str, project_gid: str):
+        """Update the color of a project, using the external color name."""
         if not self.is_configured or not self.projects_api:
             return None
 
@@ -346,6 +384,7 @@ class AsanaClient:
             return f"Exception when calling ProjectsApi->update_project: {e}"
 
     def add_note(self, new_note: str, project_gid: str):
+        """Add a note to the top of a project's notes field."""
         if not self.is_configured or not self.projects_api:
             return None
 
@@ -361,12 +400,77 @@ class AsanaClient:
             new_notes: str = new_note + "\n" + current_notes
             self.replace_notes(new_notes, project_gid)
 
+    async def update_all_projects_permissions(
+        self, members_list: list[str], progress_callback=None
+    ):
+        """Add new members to all projects."""
+        if not self.is_configured or not self.projects_api or not self.users_api:
+            return None
+
+        projects = await self.fetch_projects()
+        if not projects:
+            return "No projects found"
+
+        total = len(projects)
+        completed = 0
+
+        opts = {"opt_fields": "email"}
+        team_members = self.users_api.get_users_for_workspace(
+            self.config["workspace"], opts
+        )
+
+        for project in projects:
+            if project.get("default_access_level") != "admin":
+                body = {"data": {"default_access_level": "admin"}}
+                try:
+                    self.projects_api.update_project(
+                        body, project["gid"], opts={"opt_fields": "name"}
+                    )
+                except ApiException as e:
+                    print(
+                        "Exception when calling ProjectsApi->update_project:: %s\n" % e
+                    )
+
+            project_members = project.get("members")
+            if project_members:
+                members_gids = {member["gid"] for member in project_members}
+                project_emails = set()
+                for user in team_members:  # type: ignore
+                    if user["gid"] in members_gids:
+                        project_emails.add(user["email"])
+
+                members_to_add = [
+                    member for member in members_list if member not in project_emails
+                ]
+                if not members_to_add:
+                    continue
+
+                members_list = members_to_add
+            else:
+                members_list = members_list
+            print(members_list)
+            # try:
+            # body = {"data": {"members": ",".join(members_list)}}
+            # self.projects_api.add_members_for_project(
+            #     body, project["gid"], opts={"opt_fields": "name"}
+            # )
+            # except ApiException as e:
+            #     print(f"Error adding members to {project['name']}: {e}")
+
+            completed += 1
+            print(completed)
+            print(total)
+            if progress_callback:
+                progress_callback(completed, total)
+
+        return f"Updated {completed} projects"
+
 
 def create_app():
     client = AsanaClient()
     is_initialized = False
 
-    def create_loading_overlay():
+    def create_loading_overlay() -> Element:
         overlay = ui.element("div").classes(
             "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
         )
@@ -376,7 +480,12 @@ def create_app():
                 ui.label("Fetching projects...").classes("text-white")
         return overlay
 
-    async def initialize_app():
+    async def initialize_app() -> bool:
+        """Check if client is configured and fetch initial projects list.
+
+        Returns:
+            bool: Whether client has been configured and projects have been fetched for the first time.
+        """
         nonlocal is_initialized
         if is_initialized or not client.is_configured:
             return is_initialized
@@ -389,10 +498,20 @@ def create_app():
         title: str,
         colors: str | list[str] | None = None,
         with_dates: bool = False,
-        sort_by_creation: bool = False,
+        sort_by_creation: bool = True,
         ifsp_only: bool = False,
         is_other: bool = False,
     ):
+        """Display a list of projects, filterred by various values.
+
+        Args:
+            title (str): Title to display on the page.
+            colors (str | list[str] | None, optional): Colors to filter by, using external names. Defaults to None.
+            with_dates (bool, optional): Whether to filter to only projects that have dates in their name. Defaults to False.
+            sort_by_creation (bool, optional): Whether to sort the list by project creation date. Defaults to True.
+            ifsp_only (bool, optional): Whether to filter to only projects that have 'IFSP' in their notes. Defaults to False.
+            is_other (bool, optional): Whether to filter to only projects that have colors that are not in any other config. Defaults to False.
+        """
         page_title = ui.label(f"{title}").classes("text-lg")
 
         projects = await client.fetch_projects()
@@ -430,6 +549,7 @@ def create_app():
             ui.link(link_text, project["permalink_url"], new_tab=True)
 
     def show_settings(force: bool = False):
+        """Open a dialog with fields for each config value in client.config."""
         with ui.dialog() as dialog, ui.card().classes("w-96"):
             ui.label("Tool Settings").classes("text-xl font-bold")
             dialog.props("persistent")
@@ -453,7 +573,8 @@ def create_app():
                 for key in client.config
             }
 
-            async def save_settings():
+            async def _save_settings():
+                """Save settings using client.save_config"""
                 for key, input_field in inputs.items():
                     if not input_field.value:
                         ui.notify("All fields are required!", type="negative")
@@ -469,7 +590,7 @@ def create_app():
                     ui.notify("Invalid configuration!", type="negative")
 
             with ui.row():
-                ui.button("Save", on_click=save_settings).props("icon=save")
+                ui.button("Save", on_click=_save_settings).props("icon=save")
                 if not force:
                     ui.button("Cancel", on_click=dialog.close).props("icon=close")
 
@@ -477,6 +598,7 @@ def create_app():
 
     @ui.refreshable
     def display_staleness():
+        """Display how long it has been since cache was refreshed with new projects."""
         if client.last_fetch_time is None:
             return ui.label("No data loaded").classes("text-white")
 
@@ -494,13 +616,16 @@ def create_app():
         return ui.label(f"Data age: {time_text}").classes("text-white")
 
     async def refresh_projects():
+        """Fetch projects and reload the page."""
         await client.fetch_projects(force=True)
         ui.navigate.reload()
 
+    # Store whether the user should be warned explicitly about the age of the data
     timeout_warning = False
 
     @ui.refreshable
     def display_cache_warning():
+        """Display a banner warning the user about the age of the data if client.cache_duration has passed."""
         nonlocal timeout_warning
         if not client.last_fetch_time or timeout_warning:
             return
@@ -542,6 +667,16 @@ def create_app():
         ui.timer(1.0, display_cache_warning.refresh)
 
     def create_colored_button(title: str, colors: list[str], on_click: Callable):
+        """Create a button link with a background color or gradient.
+
+        Args:
+            title (str): Title of the button.
+            colors (list[str]): List of colors to use for background.
+            on_click (Callable): What to execute on click.
+
+        Returns:
+            Button
+        """
         button = ui.button(title, on_click=on_click)
 
         def get_button_style(colors):
@@ -554,7 +689,8 @@ def create_app():
         button.classes(get_button_style(colors))
         return button
 
-    def should_show_button(config, user_initials, hide_buttons):
+    def should_show_button(config, user_initials, hide_buttons) -> bool:
+        """Determine if a button should be hidden based on a user's initials and the config."""
         if not hide_buttons:
             return True
         return "users" in config and user_initials in config.get("users", [])
@@ -563,77 +699,111 @@ def create_app():
     def root():
         create_header(root_page=True)
 
-        loading = create_loading_overlay()
-
-        content_container = ui.element("div")
-        content_container.set_visibility(False)
-        with content_container:
-            with ui.row():
-                user_initials = client.config.get("initials")
-                hide_buttons = (
-                    any(
-                        "users" in config and user_initials in config["users"]
-                        for config in client.page_configs.values()
-                    )
-                    if user_initials
-                    else False
+        with ui.row():
+            user_initials = client.config.get("initials")
+            hide_buttons = (
+                any(
+                    "users" in config and user_initials in config["users"]
+                    for config in client.page_configs.values()
                 )
+                if user_initials
+                else False
+            )
 
-                with ui.column():
-                    ui.label("List:").classes("text-lg")
+            with ui.column():
+                ui.label("List:").classes("text-lg")
 
-                    for config_key, config in client.page_configs.items():
-                        if not should_show_button(config, user_initials, hide_buttons):
-                            continue
+                for config_key, config in client.page_configs.items():
+                    if not should_show_button(config, user_initials, hide_buttons):
+                        continue
 
-                        if "list" in config.get("types", []):
-                            if config.get("is_other"):
-                                ui.button(
-                                    config["title"],
-                                    on_click=lambda k=config_key: ui.navigate.to(
-                                        f"/list/{k}"
-                                    ),
-                                ).classes("!bg-gray-400 !text-black")
-                            else:
-                                create_colored_button(
-                                    config["title"],
-                                    config["colors"],
-                                    lambda k=config_key: ui.navigate.to(f"/list/{k}"),
+                    if "list" in config.get("types", []):
+                        if config.get("is_other"):
+                            ui.button(
+                                config["title"],
+                                on_click=lambda k=config_key: ui.navigate.to(
+                                    f"/list/{k}"
+                                ),
+                            ).classes("!bg-gray-400 !text-black")
+                        else:
+                            create_colored_button(
+                                config["title"],
+                                config["colors"],
+                                lambda k=config_key: ui.navigate.to(f"/list/{k}"),
+                            )
+
+            with ui.column():
+                ui.label("Review:").classes("text-lg")
+                for config_key, config in client.page_configs.items():
+                    if not should_show_button(config, user_initials, hide_buttons):
+                        continue
+
+                    if "review" in config.get("types", []):
+                        if config.get("is_other"):
+                            ui.button(
+                                config["title"],
+                                on_click=lambda k=config_key: ui.navigate.to(
+                                    f"/review/{k}"
+                                ),
+                            ).classes("!bg-gray-400 !text-black")
+                        else:
+                            create_colored_button(
+                                config["title"],
+                                config["colors"],
+                                lambda k=config_key: ui.navigate.to(f"/review/{k}"),
+                            )
+
+            with ui.column():
+                ui.label("Tools:").classes("text-lg")
+
+                def show_permission_dialog():
+                    with ui.dialog() as dialog, ui.card():
+                        ui.label("Update Projects Permissions").classes(
+                            "text-xl font-bold"
+                        )
+                        members_input = ui.textarea(
+                            "Enter email addresses (one per line)"
+                        ).classes("w-full")
+
+                        async def run_update():
+                            members = [
+                                m.strip()
+                                for m in members_input.value.split("\n")
+                                if m.strip()
+                            ]
+                            if not members:
+                                ui.notify(
+                                    "Please enter at least one email address",
+                                    type="negative",
+                                )
+                                return
+
+                            @ui.refreshable
+                            def update_progress(completed, total):
+                                return ui.label(
+                                    f"Processing: {completed}/{total} projects"
                                 )
 
-                with ui.column():
-                    ui.label("Review:").classes("text-lg")
-                    for config_key, config in client.page_configs.items():
-                        if not should_show_button(config, user_initials, hide_buttons):
-                            continue
+                            result = await client.update_all_projects_permissions(
+                                members, update_progress
+                            )
+                            ui.notify(result)
+                            dialog.close()
 
-                        if "review" in config.get("types", []):
-                            if config.get("is_other"):
-                                ui.button(
-                                    config["title"],
-                                    on_click=lambda k=config_key: ui.navigate.to(
-                                        f"/review/{k}"
-                                    ),
-                                ).classes("!bg-gray-400 !text-black")
-                            else:
-                                create_colored_button(
-                                    config["title"],
-                                    config["colors"],
-                                    lambda k=config_key: ui.navigate.to(f"/review/{k}"),
-                                )
+                        with ui.row():
+                            ui.button("Start", on_click=run_update)
+                            ui.button("Cancel", on_click=dialog.close)
+
+                    dialog.open()
+
+                ui.button(
+                    "Update Projects Permissions (In Progress)",
+                    # on_click=show_permission_dialog,
+                ).classes("!bg-gray-400 !text-black")
 
         async def init():
-            nonlocal loading, content_container, is_initialized
             if not client.is_configured:
                 ui.timer(0.1, lambda: show_settings(force=True), once=True)
-                return
-
-            if is_initialized:
-                await asyncio.sleep(
-                    0.1
-                )  # Kind of jank but I've fought with this for too long and this works
-                loading.visible = False
-                content_container.visible = True
                 return
 
             await initialize_app()
