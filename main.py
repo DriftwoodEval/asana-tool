@@ -582,6 +582,7 @@ def create_app():
                     client.save_config(key, input_field.value)
 
                 if client.is_configured:
+                    # TODO: this currently requires saving twice?
                     ui.notify("Settings saved successfully!", type="positive")
                     await client.fetch_projects()
                     dialog.close()
@@ -801,12 +802,16 @@ def create_app():
                     # on_click=show_permission_dialog,
                 ).classes("!bg-gray-400 !text-black")
 
-        async def init():
-            if not client.is_configured:
-                ui.timer(0.1, lambda: show_settings(force=True), once=True)
-                return
+        force_settings_open = True
 
-            await initialize_app()
+        async def init():
+            nonlocal force_settings_open
+            if not client.is_configured and force_settings_open:
+                ui.timer(0.1, lambda: show_settings(force=True), once=True)
+                force_settings_open = False
+                return
+            else:
+                await initialize_app()
 
         ui.timer(0.1, init)
 
