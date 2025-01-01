@@ -2,10 +2,9 @@ import asyncio
 import multiprocessing
 from datetime import date, datetime
 
-from nicegui.element import Element
-
 # Bizarrely, this needs to be up here for native mode, don't move it
 multiprocessing.set_start_method("spawn", force=True)
+
 import re
 import time
 from os import getenv
@@ -16,6 +15,7 @@ import keyring
 from asana.rest import ApiException
 from dotenv import load_dotenv
 from nicegui import ui
+from nicegui.element import Element
 
 # Load variables from .env
 load_dotenv()
@@ -984,7 +984,7 @@ def create_app():
 
         show_current_project()
 
-    ui.run(native=True, title="Asana Tool")
+    ui.run(native=True, title="Asana Tool", window_size=(1200, 800))
 
 
 create_app()
