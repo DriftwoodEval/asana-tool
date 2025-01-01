@@ -75,6 +75,7 @@ class AsanaClient:
                 "name": "light-pink",
                 "color": "#F9AAEF",
             },
+            "black": {"name": "light-warm-gray", "color": "#6D6E6F"},
         }
         # Dict of buttons with title, colors to filter by, if this should be available as both list and review types,
         # if it should only be projects with dates in the title, 'is_other', and 'users'.
@@ -120,8 +121,13 @@ class AsanaClient:
                 "types": ["list"],
             },
             "questionnaires": {
-                "title": "Questionnaires",
+                "title": "Questionnaires to Be Sent",
                 "colors": ["light-blue", "coral"],
+                "types": ["list", "review"],
+            },
+            "questionnaires-sent": {
+                "title": "Questionnaires Sent But Not Received",
+                "colors": ["black"],
                 "types": ["list", "review"],
             },
             "other": {
