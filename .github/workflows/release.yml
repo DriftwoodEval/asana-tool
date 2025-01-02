@@ -29,7 +29,7 @@ jobs:
       - name: Build .exe
         run: |
           .venv\Scripts\Activate.ps1
-          nicegui-pack --onefile --windowed --clean --name "AsanaTool" main.py
+          nicegui-pack --onefile --name "AsanaTool" main.py
 
       - uses: actions/upload-artifact@v4
         with:
