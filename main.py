@@ -984,7 +984,7 @@ def create_app():
 
         show_current_project()
 
-    ui.run(native=True, title="Asana Tool", window_size=(1200, 800))
+    ui.run(native=True, title="Asana Tool", window_size=(1200, 800), reload=False)
 
 
 create_app()
