@@ -122,7 +122,7 @@ class AsanaClient:
             },
             "questionnaires": {
                 "title": "Questionnaires to Be Sent",
-                "colors": ["light-blue", "coral"],
+                "colors": ["coral"],
                 "types": ["list", "review"],
             },
             "questionnaires-sent": {
