@@ -1,15 +1,12 @@
 [project]
 name = "asana-internal"
-version = "0.1.0"
+version = "0.0.0"
 description = "Internal tool for managing Asana projects"
 requires-python = ">=3.13"
 dependencies = [
     "asana>=5.0.10",
     "keyring>=25.5.0",
     "nicegui>=2.8.1",
-    "pyqt5>=5.15.11; sys_platform != 'win32'",
-    "pyqtwebengine>=5.15.7; sys_platform != 'win32'",
-    "pywebview[qt]>=5.3.2; sys_platform != 'win32'",
 ]
 [tool.ruff.lint]
 ignore = ["E402"]

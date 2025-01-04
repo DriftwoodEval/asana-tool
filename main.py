@@ -1,12 +1,7 @@
 import asyncio
-import multiprocessing
-from datetime import date, datetime
-
-# Bizarrely, this needs to be up here for native mode, don't move it
-multiprocessing.set_start_method("spawn", force=True)
-
 import re
 import time
+from datetime import date, datetime
 from os import getenv
 from typing import Any, Callable, Optional
 
@@ -607,7 +602,7 @@ def create_app():
     def display_staleness():
         """Display how long it has been since cache was refreshed with new projects."""
         if client.last_fetch_time is None:
-            return ui.label("No data loaded").classes("text-white")
+            return ui.label("Loading projects...").classes("text-white")
 
         elapsed_seconds = int(time.time() - client.last_fetch_time)
 
@@ -984,7 +979,7 @@ def create_app():
 
         show_current_project()
 
-    ui.run(native=True, title="Asana Tool", window_size=(1200, 800), reload=False)
+    ui.run(title="Asana Tool")
 
 
 create_app()
