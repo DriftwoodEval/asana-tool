@@ -31,10 +31,12 @@ jobs:
           .venv\Scripts\Activate.ps1
           nicegui-pack --name "AsanaTool" main.py
 
+      - name: Compress
+        run: Compress-Archive -Path dist/AsanaTool -DestinationPath dist/AsanaTool.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: AsanaTool.exe
-          path: dist/AsanaTool.exe
+          name: AsanaTool.zip
+          path: dist/AsanaTool.zip
           if-no-files-found: error
 
   publish:
@@ -44,12 +46,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
-        with:
-          name: AsanaTool.exe
-          path: ./
-
       - uses: softprops/action-gh-release@v2
         with:
-          files: "./AsanaTool.exe"
+          files: |
+            AsanaTool/*
