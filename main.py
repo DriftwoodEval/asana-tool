@@ -979,7 +979,7 @@ def create_app():
 
         show_current_project()
 
-    ui.run(title="Asana Tool")
+    ui.run(reload=False, title="Asana Tool")
 
 
 create_app()

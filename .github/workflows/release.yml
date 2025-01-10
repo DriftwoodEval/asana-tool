@@ -1,7 +1,6 @@
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - v[0-9]+.[0-9]+.[0-9]+*
@@ -15,11 +14,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Install UPX
-        uses: crazy-max/ghaction-upx@v3
-        with:
-          install-only: true
-
       - name: Set up Python
         run: uv python install
 
@@ -29,12 +23,14 @@ jobs:
       - name: Build .exe
         run: |
           .venv\Scripts\Activate.ps1
-          nicegui-pack --onefile --name "AsanaTool" main.py
+          nicegui-pack --name "AsanaTool" main.py
 
+      - name: Compress
+        run: Compress-Archive -Path dist/AsanaTool -DestinationPath dist/AsanaTool.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: AsanaTool.exe
-          path: dist/AsanaTool.exe
+          name: AsanaTool.zip
+          path: dist/AsanaTool.zip
           if-no-files-found: error
 
   publish:
@@ -44,12 +40,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
-          name: AsanaTool.exe
+          name: AsanaTool.zip
           path: ./
-
       - uses: softprops/action-gh-release@v2
         with:
-          files: "./AsanaTool.exe"
+          files: "./AsanaTool.zip"
+          fail_on_unmatched_files: true
