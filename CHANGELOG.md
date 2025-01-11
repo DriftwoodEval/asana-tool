@@ -1,3 +1,14 @@
+## v0.2.0 (2025-01-11)
+
+### Feat
+
+- add color changing when adding note
+- insert new notes after blank line
+
+### Fix
+
+- **review**: move buttons to above note
+
 ## v0.1.0 (2025-01-03)
 
 ### Feat
