@@ -681,6 +681,13 @@ def create_app():
         ui.timer(1.0, display_staleness.refresh)
         ui.timer(1.0, display_cache_warning.refresh)
 
+    def get_button_style(colors):
+        if isinstance(colors, list):
+            if len(colors) > 1:
+                return f"!bg-gradient-to-r from-[{client.colors[colors[0]]['color']}] to-[{client.colors[colors[1]]['color']}] !text-black"
+            return f"!bg-[{client.colors[colors[0]]['color']}] !text-black"
+        return f"!bg-[{client.colors[colors]['color']}] !text-black"
+
     def create_colored_button(title: str, colors: list[str], on_click: Callable):
         """Create a button link with a background color or gradient.
 
@@ -693,13 +700,6 @@ def create_app():
             Button
         """
         button = ui.button(title, on_click=on_click)
-
-        def get_button_style(colors):
-            if isinstance(colors, list):
-                if len(colors) > 1:
-                    return f"!bg-gradient-to-r from-[{client.colors[colors[0]]['color']}] to-[{client.colors[colors[1]]['color']}] !text-black"
-                return f"!bg-[{client.colors[colors[0]]['color']}] !text-black"
-            return f"!bg=[{client.colors[colors]['colors']}] !text-black"
 
         button.classes(get_button_style(colors))
         return button
@@ -912,9 +912,34 @@ def create_app():
                             "Enter note (adds date and initials)"
                         ).classes("w-full")
 
+                        color_change = ui.dropdown_button(
+                            "Change color",
+                            auto_close=True,
+                        )
+                        color_to_become: None | str = None
+
+                        user_initials = client.config.get("initials")
+                        if user_initials == "AJP":
+                            color_to_become = "yellow"
+                            color_change.classes(get_button_style("yellow"))
+
+                        def set_color(color):
+                            nonlocal color_to_become
+                            color_change.classes(get_button_style(color))
+                            color_to_become = color
+
+                        with color_change:
+                            for color in client.colors:
+                                ui.item(
+                                    color.capitalize(),
+                                    on_click=lambda c=color: set_color(c),
+                                )
+
                         def submit():
                             if note_input.value:
                                 client.add_note(note_input.value, project["gid"])
+                                if color_to_become:
+                                    client.change_color(color_to_become, project["gid"])
                                 dialog.close()
 
                         with ui.row():
