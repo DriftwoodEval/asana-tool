@@ -40,11 +40,22 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        
+      - name: Extract changelog
+        run: |
+          version=$(echo "${GITHUB_REF#refs/tags/}")
+          changelog=$(sed -n '/## '${version}'/,/^## /p' CHANGELOG.md | sed '$d' | tail -n +3)
+          echo "CHANGELOG<<EOF" >> $GITHUB_ENV
+          echo "$changelog" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
       - uses: actions/download-artifact@v4
         with:
           name: AsanaTool.zip
           path: ./
+
       - uses: softprops/action-gh-release@v2
         with:
+          body: ${{env.CHANGELOG}}
           files: "./AsanaTool.zip"
           fail_on_unmatched_files: true
