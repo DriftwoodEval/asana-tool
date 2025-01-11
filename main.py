@@ -395,10 +395,23 @@ class AsanaClient:
         if initials:
             new_note += " ///" + initials
 
+        # Ensure project is not being overwritten with old data
         current_project: dict[str, str] | None = self.fetch_project(project_gid)
         if current_project:
             current_notes = current_project.get("notes", "")
-            new_notes: str = new_note + "\n" + current_notes
+            notes_by_line = current_notes.split("\n")
+            # Check if there is a blank line in the first 5 lines
+            blank_line_index = next(
+                (i for i, line in enumerate(notes_by_line[:5]) if not line.strip()),
+                None,
+            )
+            if blank_line_index is not None:
+                # If there is a blank line in the first 5 line, insert the new note after it
+                notes_by_line.insert(blank_line_index + 1, new_note)
+            else:
+                # Otherwise, add the note to the top as normal
+                notes_by_line.insert(0, new_note)
+            new_notes = "\n".join(notes_by_line)
             self.replace_notes(new_notes, project_gid)
 
     async def update_all_projects_permissions(
@@ -895,7 +908,9 @@ def create_app():
 
                 def add_note():
                     with ui.dialog() as dialog, ui.card().classes("w-96"):
-                        note_input = ui.input("Enter note").classes("w-full")
+                        note_input = ui.input(
+                            "Enter note (adds date and initials)"
+                        ).classes("w-full")
 
                         def submit():
                             if note_input.value:
