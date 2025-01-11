@@ -891,20 +891,6 @@ def create_app():
         def show_current_project():
             nonlocal current_index
             with ui.card().classes("w-full max-w-2xl mx-auto p-4"):
-                if current_index >= len(filtered_projects):
-                    ui.label("No more projects to review!").classes("text-xl")
-                    return
-
-                project = filtered_projects[current_index]
-
-                ui.label(
-                    f"Project {current_index + 1} of {len(filtered_projects)}"
-                ).classes("text-sm text-gray-500")
-                ui.label(project["name"]).classes("text-xl font-bold")
-
-                if project.get("notes"):
-                    ui.label("Notes:").classes("font-bold")
-                    ui.label(project["notes"]).classes("whitespace-pre-wrap")
 
                 def add_note():
                     with ui.dialog() as dialog, ui.card().classes("w-96"):
@@ -971,6 +957,17 @@ def create_app():
                             ui.button("Cancel", on_click=dialog.close)
                     dialog.open()
 
+                if current_index >= len(filtered_projects):
+                    ui.label("No more projects to review!").classes("text-xl")
+                    return
+
+                project = filtered_projects[current_index]
+
+                ui.label(
+                    f"Project {current_index + 1} of {len(filtered_projects)}"
+                ).classes("text-sm text-gray-500")
+                ui.label(project["name"]).classes("text-xl font-bold")
+
                 with ui.row():
                     ui.button(
                         "Open in Asana",
@@ -1016,6 +1013,10 @@ def create_app():
                         prev_button.disable()
                     if current_index >= len(filtered_projects) - 1:
                         next_button.disable()
+
+                if project.get("notes"):
+                    ui.label("Notes:").classes("font-bold")
+                    ui.label(project["notes"].strip()).classes("whitespace-pre-wrap")
 
         show_current_project()
 
