@@ -20,13 +20,18 @@ jobs:
       - name: Install the project
         run: uv sync --all-extras --dev
 
+      - name: Write environment variables
+        run: |
+          echo "__import__('os').environ.setdefault('EXECUTABLE', 'True')" >> env.py
+
       - name: Build .exe
         run: |
           .venv\Scripts\Activate.ps1
-          nicegui-pack --name "AsanaTool" main.py
+          nicegui-pack --runtime-hook env.py --name "AsanaTool" main.py
 
-      - name: Compress
+      - name: Compress archive
         run: Compress-Archive -Path dist/AsanaTool -DestinationPath dist/AsanaTool.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: AsanaTool.zip
@@ -40,7 +45,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        
+
       - name: Extract changelog
         run: |
           version=$(echo "${GITHUB_REF#refs/tags/}")

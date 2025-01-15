@@ -1020,7 +1020,8 @@ def create_app():
 
         show_current_project()
 
-    ui.run(reload=False, title="Asana Tool")
+    IN_EXE = bool(getenv("EXECUTABLE", "False"))
+    ui.run(reload=(not IN_EXE), title="Asana Tool")
 
 
 create_app()
