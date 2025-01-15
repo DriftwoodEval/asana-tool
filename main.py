@@ -428,11 +428,6 @@ class AsanaClient:
         total = len(projects)
         completed = 0
 
-        opts = {"opt_fields": "email"}
-        team_members = self.users_api.get_users_for_workspace(
-            self.config["workspace"], opts
-        )
-
         for project in projects:
             if project.get("default_access_level") != "admin":
                 body = {"data": {"default_access_level": "admin"}}
@@ -445,31 +440,18 @@ class AsanaClient:
                         "Exception when calling ProjectsApi->update_project:: %s\n" % e
                     )
 
-            project_members = project.get("members")
-            if project_members:
-                members_gids = {member["gid"] for member in project_members}
-                project_emails = set()
-                for user in team_members:  # type: ignore
-                    if user["gid"] in members_gids:
-                        project_emails.add(user["email"])
-
-                members_to_add = [
-                    member for member in members_list if member not in project_emails
-                ]
-                if not members_to_add:
-                    continue
-
-                members_list = members_to_add
-            else:
-                members_list = members_list
-            print(members_list)
-            # try:
-            # body = {"data": {"members": ",".join(members_list)}}
-            # self.projects_api.add_members_for_project(
-            #     body, project["gid"], opts={"opt_fields": "name"}
+            # TODO: Only add members that aren't already in the project
+            # opts = {"opt_fields": "email"}
+            # team_members = self.users_api.get_users_for_workspace(
+            #     self.config["workspace"], opts
             # )
-            # except ApiException as e:
-            #     print(f"Error adding members to {project['name']}: {e}")
+            try:
+                body = {"data": {"members": ",".join(members_list)}}
+                self.projects_api.add_members_for_project(
+                    body, project["gid"], opts={"opt_fields": "name"}
+                )
+            except ApiException as e:
+                print(f"Error adding members to {project['name']}: {e}")
 
             completed += 1
             print(completed)
@@ -812,8 +794,8 @@ def create_app():
                     dialog.open()
 
                 ui.button(
-                    "Update Projects Permissions (In Progress)",
-                    # on_click=show_permission_dialog,
+                    "Update Projects Permissions",
+                    on_click=show_permission_dialog,
                 ).classes("!bg-gray-400 !text-black")
 
         force_settings_open = True
