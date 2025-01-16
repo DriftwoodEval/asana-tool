@@ -1,5 +1,5 @@
 [project]
-name = "asana-internal"
+name = "asana-tool"
 version = "0.2.0"
 description = "Internal tool for managing Asana projects"
 requires-python = ">=3.13"

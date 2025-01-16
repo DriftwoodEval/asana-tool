@@ -123,7 +123,7 @@ wheels = [
 ]
 
 [[package]]
-name = "asana-internal"
+name = "asana-tool"
 version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
