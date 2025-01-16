@@ -418,7 +418,7 @@ class AsanaClient:
             new_notes = "\n".join(notes_by_line)
             self.replace_notes(new_notes, project_gid)
 
-    # TODO: add progress display
+    # TODO: add progress
     async def update_all_projects_permissions(
         self, members_list: list[str], progress_callback=None
     ):
@@ -576,20 +576,18 @@ def create_app():
 
             async def _save_settings():
                 """Save settings using client.save_config"""
-                for key, input_field in inputs.items():
-                    if not input_field.value:
-                        ui.notify("All fields are required!", type="negative")
-                        return
-                    client.save_config(key, input_field.value)
+                all_fields_filled = all(
+                    input_field.value for input_field in inputs.values()
+                )
+                if not all_fields_filled:
+                    ui.notify("All fields are required!", type="negative")
+                    return
 
-                if client.is_configured:
-                    # TODO: this currently requires saving twice?
-                    ui.notify("Settings saved successfully!", type="positive")
-                    await client.fetch_projects()
-                    dialog.close()
-                    ui.navigate.reload()
-                else:
-                    ui.notify("Invalid configuration!", type="negative")
+                ui.notify("Settings saved", type="positive")
+                dialog.close()
+
+                for key, input_field in inputs.items():
+                    client.save_config(key, input_field.value)
 
             with ui.row():
                 ui.button("Save", on_click=_save_settings).props("icon=save")
@@ -617,7 +615,7 @@ def create_app():
 
         return ui.label(f"Data age: {time_text}").classes("text-white")
 
-    # TODO: add progress spinner
+    # TODO: add progress
     async def refresh_projects():
         """Fetch projects and reload the page."""
         await client.fetch_projects(force=True)
@@ -655,7 +653,7 @@ def create_app():
                 if refresh:
                     display_staleness()
                     ui.button(
-                        on_click=lambda: refresh_projects(),
+                        on_click=refresh_projects,
                         icon="refresh",
                     ).props("flat color=white")
                 if root_page:
