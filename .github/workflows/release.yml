@@ -27,7 +27,7 @@ jobs:
       - name: Build .exe
         run: |
           .venv\Scripts\Activate.ps1
-          nicegui-pack --runtime-hook env.py --name "AsanaTool" main.py
+          nicegui-pack --runtime-hook env.py --windowed --name "AsanaTool" main.py
 
       - name: Compress archive
         run: Compress-Archive -Path dist/AsanaTool -DestinationPath dist/AsanaTool.zip

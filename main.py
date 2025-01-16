@@ -1,4 +1,8 @@
 import asyncio
+import multiprocessing
+
+# Bizarrely, this needs to be up here for native mode, don't move it
+multiprocessing.set_start_method("spawn", force=True)
 import re
 import time
 from datetime import date, datetime
@@ -9,7 +13,7 @@ import asana
 import keyring
 from asana.rest import ApiException
 from dotenv import load_dotenv
-from nicegui import ui
+from nicegui import native, ui
 from nicegui.element import Element
 
 # Load variables from .env
@@ -414,6 +418,7 @@ class AsanaClient:
             new_notes = "\n".join(notes_by_line)
             self.replace_notes(new_notes, project_gid)
 
+    # TODO: add progress display
     async def update_all_projects_permissions(
         self, members_list: list[str], progress_callback=None
     ):
@@ -612,6 +617,7 @@ def create_app():
 
         return ui.label(f"Data age: {time_text}").classes("text-white")
 
+    # TODO: add progress spinner
     async def refresh_projects():
         """Fetch projects and reload the page."""
         await client.fetch_projects(force=True)
@@ -693,7 +699,7 @@ def create_app():
         return "users" in config and user_initials in config.get("users", [])
 
     @ui.page("/")
-    def root():
+    async def root():
         create_header(root_page=True)
 
         with ui.row():
@@ -1002,8 +1008,14 @@ def create_app():
 
         show_current_project()
 
-    IN_EXE = bool(getenv("EXECUTABLE", "False"))
-    ui.run(reload=(not IN_EXE), title="Asana Tool")
+    IN_EXE = bool(getenv("EXECUTABLE", False))
+    ui.run(
+        reload=(not IN_EXE),
+        native=IN_EXE,
+        title="Asana Tool",
+        window_size=(1200, 800) if IN_EXE else None,
+        port=native.find_open_port(),
+    )
 
 
 create_app()
