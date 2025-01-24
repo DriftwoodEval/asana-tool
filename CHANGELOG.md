@@ -1,3 +1,15 @@
+## v0.3.0 (2025-01-23)
+
+### Feat
+
+- native mode
+- tool to add members to all projects
+
+### Fix
+
+- detect if running on windows using platform
+- saving settings should work smoother
+
 ## v0.2.0 (2025-01-11)
 
 ### Feat

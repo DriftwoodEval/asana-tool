@@ -1,6 +1,6 @@
 [project]
 name = "asana-tool"
-version = "0.2.0"
+version = "0.3.0"
 description = "Internal tool for managing Asana projects"
 requires-python = ">=3.13"
 dependencies = [
