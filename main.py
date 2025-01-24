@@ -3,6 +3,7 @@ import multiprocessing
 
 # Bizarrely, this needs to be up here for native mode, don't move it
 multiprocessing.set_start_method("spawn", force=True)
+import platform
 import re
 import time
 from datetime import date, datetime
@@ -1006,12 +1007,12 @@ def create_app():
 
         show_current_project()
 
-    IN_EXE = bool(getenv("EXECUTABLE", False))
+    ON_WINDOWS = platform.system() == "Windows"
     ui.run(
-        reload=(not IN_EXE),
-        native=IN_EXE,
+        reload=(not ON_WINDOWS),
+        native=ON_WINDOWS,
         title="Asana Tool",
-        window_size=(1200, 800) if IN_EXE else None,
+        window_size=(1200, 800) if ON_WINDOWS else None,
         port=native.find_open_port(),
     )
 
